@@ -1,0 +1,184 @@
+// vpmon — painel de monitoramento do servidor (vpserver-monitoring).
+//
+//	vpmon              sobe o coletor e o painel web
+//	vpmon init         prepara a pasta de instalação (compose.yml, .env, data/) — ver internal/setup
+//	vpmon healthcheck  usado pelo healthcheck do Docker (a imagem não tem curl)
+//	vpmon version
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+	_ "time/tzdata" // fuso horário embutido (a imagem não tem /usr/share/zoneinfo)
+
+	"github.com/edvitor13/vpserver-monitoring/internal/ai"
+	"github.com/edvitor13/vpserver-monitoring/internal/monitor"
+	"github.com/edvitor13/vpserver-monitoring/internal/notify"
+	"github.com/edvitor13/vpserver-monitoring/internal/setup"
+	"github.com/edvitor13/vpserver-monitoring/internal/web"
+)
+
+var version = "dev" // trocado no build: -ldflags "-X main.version=<commit>"
+
+func env(k, def string) string {
+	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+		return v
+	}
+	return def
+}
+
+func envFloat(k string, def float64) float64 {
+	if v, err := strconv.ParseFloat(env(k, ""), 64); err == nil {
+		return v
+	}
+	return def
+}
+
+func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	listen := env("VPMON_LISTEN", ":8080")
+
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "healthcheck":
+			port := listen[strings.LastIndexByte(listen, ':')+1:]
+			c := &http.Client{Timeout: 3 * time.Second}
+			resp, err := c.Get("http://127.0.0.1:" + port + "/healthz")
+			if err != nil || resp.StatusCode != http.StatusOK {
+				os.Exit(1)
+			}
+			return
+		case "version":
+			fmt.Println(version)
+			return
+		case "init":
+			err := setup.Run(setup.Options{Out: env("VPMON_INIT_DIR", "/out"), DockerGID: os.Getenv("DOCKER_GID"),
+				Owner: os.Getenv("OWNER"), TunnelToken: os.Getenv("VPMON_TUNNEL_TOKEN"), Image: os.Getenv("VPMON_IMAGE")})
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "erro:", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
+	user, pass := env("VPMON_USER", web.DefaultUser), os.Getenv("VPMON_PASSWORD")
+	forceChange := env("VPMON_FORCE_PASSWORD_CHANGE", "false") == "true"
+	if pass == "" {
+		slog.Warn("sem VPMON_PASSWORD: login inicial admin/admin, com troca obrigatória no primeiro acesso — entre e troque já")
+	} else if len(pass) < 10 && !forceChange {
+		slog.Error("VPMON_PASSWORD precisa ter pelo menos 10 caracteres")
+		os.Exit(2)
+	}
+	dataDir := env("VPMON_DATA", "/data")
+	secret := env("VPMON_SECRET", "")
+	if secret == "" {
+		secret = loadOrCreateSecret(filepath.Join(dataDir, "secret"))
+	}
+	loc, err := time.LoadLocation(env("VPMON_TZ", "America/Sao_Paulo"))
+	if err != nil {
+		loc = time.UTC
+	}
+	interval, err := time.ParseDuration(env("VPMON_INTERVAL", "5s"))
+	if err != nil || interval < time.Second {
+		interval = 5 * time.Second
+	}
+
+	mon := monitor.New(monitor.Config{
+		Interval:    interval,
+		Proc:        env("VPMON_PROC", "/proc"),
+		Sys:         env("VPMON_SYS", "/sys"),
+		Cgroup:      env("VPMON_CGROUP", "/host/cgroup"),
+		DataDir:     dataDir,
+		DockerAddr:  env("VPMON_DOCKER", "http://vpserver-dockerproxy:2375"),
+		Loc:         loc,
+		AppNames:    monitor.ParseAppNames(env("VPMON_APP_NAMES", "")),
+		SelfProject: env("VPMON_SELF_PROJECT", "vpserver-monitoring"),
+		ServerName:  env("VPMON_SERVER_NAME", ""),
+		Version:     version,
+		LogSizes:    env("VPMON_LOGSIZES", "/sizes/logsizes.txt"),
+		Limits: monitor.Limits{
+			EgressTB:    envFloat("VPMON_EGRESS_TB", 10),
+			FreeOCPU:    envFloat("VPMON_FREE_OCPU", 4),
+			FreeMemGB:   envFloat("VPMON_FREE_RAM_GB", 24),
+			FreeDiskGB:  envFloat("VPMON_FREE_BLOCK_GB", 200),
+			GbpsPerOCPU: envFloat("VPMON_GBPS_PER_OCPU", 1),
+			AlwaysFree:  env("VPMON_ALWAYS_FREE", "unknown"),
+		},
+	})
+
+	// Notificações pelo WhatsApp: Evolution API no contêiner vpserver-whatsapp
+	// (sem VPMON_WA_KEY, a aba mostra como instalar).
+	wa := notify.NewEvolution(env("VPMON_WA_URL", "http://vpserver-whatsapp:8080"), os.Getenv("VPMON_WA_KEY"),
+		env("VPMON_WA_INSTANCE", "vpserver-monitoring"))
+	nt := notify.New(mon, wa, loc, dataDir, env("VPMON_SELF_PROJECT", "vpserver-monitoring"))
+	mon.SetExtraAlerts(nt.Alerts)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	done := make(chan struct{})
+	go func() { mon.Run(ctx); close(done) }()
+	go nt.Run(ctx)
+
+	// IA (DeepSeek), pelas variáveis DEEPSEEK_*. A chave também pode
+	// ser posta pela tela (Configurações → IA), o que vale mais que o .env.
+	aiCfg := ai.Config{
+		APIKey:   os.Getenv("DEEPSEEK_API_KEY"),
+		Host:     env("DEEPSEEK_API_HOST", "api.deepseek.com"),
+		Endpoint: env("DEEPSEEK_API_ENDPOINT", "/v1/chat/completions"),
+		Model:    env("DEEPSEEK_API_MODEL", "deepseek-chat"),
+	}
+	if aiCfg.Enabled() {
+		slog.Info("IA pelo .env", "modelo", aiCfg.Model, "url", aiCfg.URL())
+	}
+
+	auth := web.NewAuth(user, pass, secret, env("VPMON_COOKIE_SECURE", "true") == "true", filepath.Join(dataDir, "auth.json"), forceChange)
+	srv := &http.Server{
+		Addr:              listen,
+		Handler:           web.New(mon, auth, env("VPMON_TRUST_CF", "true") == "true", aiCfg, filepath.Join(dataDir, "settings.json"), nt).Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	go func() {
+		slog.Info("vpmon no ar", "version", version, "listen", listen)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("servidor web caiu", "err", err)
+			stop()
+		}
+	}()
+
+	<-ctx.Done()
+	shut, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(shut)
+	<-done // espera salvar o estado
+	slog.Info("vpmon parado")
+}
+
+// loadOrCreateSecret guarda um segredo aleatório em /data/secret na primeira vez.
+func loadOrCreateSecret(p string) string {
+	if b, err := os.ReadFile(p); err == nil && len(strings.TrimSpace(string(b))) >= 32 {
+		return strings.TrimSpace(string(b))
+	}
+	buf := make([]byte, 32)
+	rand.Read(buf)
+	s := hex.EncodeToString(buf)
+	if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+		slog.Warn("não consegui gravar o segredo; as sessões caem a cada reinício", "err", err)
+	}
+	return s
+}

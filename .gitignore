@@ -1,0 +1,8 @@
+dist/
+*.exe
+*.test
+.env
+.env.*
+!deploy/env.example
+__pycache__/
+scripts/server.conf

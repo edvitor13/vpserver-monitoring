@@ -1,0 +1,125 @@
+# A cada push na master:
+#  1. test   — gofmt, vet, testes e sintaxe do JS.
+#  2. image  — publica a imagem multi-arquitetura (arm64 + amd64) em
+#              ghcr.io/<dono>/vpserver-monitoring (:latest e :<commit>). É o que
+#              quem instala pelo `vpmon init` baixa.
+#  3. deploy — (opcional) sobe a versão num servidor por SSH com chave restrita,
+#              só se a variável VPSERVER_DEPLOY for "true" no repositório.
+#
+# Deploy por SSH: a chave do segredo VPSERVER_SSH_KEY SÓ consegue rodar
+# /opt/vpserver-monitoring/bin/receive no servidor (authorized_keys com
+# command= e restrict); o receive só mexe no projeto Compose "vpserver-monitoring".
+# Segredos: VPSERVER_SSH_KEY, VPSERVER_KNOWN_HOSTS, VPSERVER_HOST e VPSERVER_URL
+# (opcional, para conferir o /healthz depois). Endereço e IP ficam em segredo de
+# propósito: o GitHub os esconde nos logs, que são públicos em repositório público.
+# Variável: VPSERVER_DEPLOY=true liga o deploy.
+name: deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false # sem dependências externas (não há go.sum)
+      - name: Testes
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; echo "rode gofmt -w ."; exit 1; }
+          go vet ./...
+          go test ./...
+          node --check internal/web/static/app.js
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64,linux/amd64
+          push: true
+          build-args: VERSION=${{ steps.v.outputs.short }}
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ steps.v.outputs.short }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # guarda a latest e as 10 versões mais novas (entende imagem multiplataforma:
+      # manter uma versão mantém as peças dela); não derruba o CI se falhar
+      - name: Limpar versões antigas da imagem
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        continue-on-error: true
+        with:
+          keep-n-tagged: 10
+          exclude-tags: latest
+          delete-untagged: true
+
+  deploy:
+    needs: test
+    if: ${{ vars.VPSERVER_DEPLOY == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      URL: ${{ secrets.VPSERVER_URL }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Compilar (linux/arm64)
+        run: |
+          v="${GITHUB_SHA::7}"
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$v" -o dist/vpmon ./cmd/vpmon
+          echo "$v" > dist/VERSION
+          cp -r deploy dist/deploy
+          tar -czf release.tgz -C dist .
+          ls -la release.tgz
+      - name: Subir no servidor
+        env:
+          SSH_KEY: ${{ secrets.VPSERVER_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPSERVER_KNOWN_HOSTS }}
+          HOST: ${{ secrets.VPSERVER_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 \
+            "ubuntu@$HOST" < release.tgz
+      - name: Conferir no ar
+        if: ${{ env.URL != '' }}
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS "$URL/healthz"; then echo; exit 0; fi
+            sleep 5
+          done
+          echo "$URL não respondeu"; exit 1

@@ -1,0 +1,6 @@
+.git
+dist
+*.exe
+.env*
+scripts
+docs

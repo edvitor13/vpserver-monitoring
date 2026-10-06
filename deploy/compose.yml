@@ -1,0 +1,244 @@
+# vpserver-monitoring — compose do deploy por pacote (deploy/receive.sh): o
+# binário vem pronto em /opt/vpserver-monitoring/current/vpmon e roda numa
+# imagem distroless. Quem instala pela imagem publicada usa o compose gerado
+# por `vpmon init` (internal/setup/compose.yml) — mantenha os dois em sincronia.
+#
+# Projeto Compose próprio (-p vpserver-monitoring), que convive com as outras
+# apps do servidor sem encostar em nada delas:
+#   - não publica porta no host (entra pelo túnel próprio da Cloudflare);
+#   - não entra em rede de outro projeto (redes vpserver-edge e vpserver-docker);
+#   - o painel nunca recebe o socket do Docker: fala com um proxy que só
+#     deixa passar GET em listar contêineres, logs, eventos, info e df, e
+#     POST em pausar/retomar contêiner (o botão das apps);
+#   - lê o host só para leitura (/proc com pid: host, /sys/fs/cgroup :ro),
+#     como usuário sem privilégio e sem nenhuma capability.
+#
+# O binário não é buildado aqui: vem pronto (Go estático, linux/arm64) em
+# /opt/vpserver-monitoring/current/vpmon e roda numa imagem distroless de 1 MB.
+# Variáveis: /opt/vpserver-monitoring/.env (modelo em deploy/env.example).
+name: vpserver-monitoring
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "5m"
+    max-file: "3"
+
+services:
+  monitor:
+    image: gcr.io/distroless/static-debian12:nonroot
+    container_name: vpserver-monitor
+    entrypoint: ["/app/vpmon"]
+    user: "65532:65532"
+    restart: unless-stopped
+    pid: host # para ler /proc do host (CPU, memória, processos, rede de cada contêiner)
+    cgroup: host # caminhos de cgroup completos em /proc/<pid>/cgroup (dono de cada processo)
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 96m
+    cpus: 0.25
+    cpu_shares: 128 # se disputar CPU com outra app, perde
+    pids_limit: 64
+    environment:
+      VPMON_USER: ${VPMON_USER:-admin}
+      VPMON_PASSWORD: ${VPMON_PASSWORD:-}
+      VPMON_FORCE_PASSWORD_CHANGE: ${VPMON_FORCE_PASSWORD_CHANGE:-false}
+      VPMON_SECRET: ${VPMON_SECRET:-}
+      VPMON_SERVER_NAME: ${VPMON_SERVER_NAME:-}
+      VPMON_APP_NAMES: ${VPMON_APP_NAMES:-}
+      VPMON_ALWAYS_FREE: ${VPMON_ALWAYS_FREE:-unknown}
+      VPMON_EGRESS_TB: ${VPMON_EGRESS_TB:-10}
+      VPMON_TZ: ${VPMON_TZ:-America/Sao_Paulo}
+      # IA do painel (DeepSeek) — sem a chave, a aba IA fica desligada
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_API_HOST: ${DEEPSEEK_API_HOST:-api.deepseek.com}
+      DEEPSEEK_API_ENDPOINT: ${DEEPSEEK_API_ENDPOINT:-/v1/chat/completions}
+      DEEPSEEK_API_MODEL: ${DEEPSEEK_API_MODEL:-deepseek-chat}
+      # WhatsApp das notificações (contêiner vpserver-whatsapp)
+      VPMON_WA_URL: http://vpserver-whatsapp:8080
+      VPMON_WA_KEY: ${VPMON_WA_KEY:-}
+      VPMON_PROC: /proc
+      VPMON_SYS: /sys
+      VPMON_CGROUP: /host/cgroup
+      VPMON_DATA: /data
+      VPMON_DOCKER: http://vpserver-dockerproxy:2375
+      VPMON_SELF_PROJECT: vpserver-monitoring
+      GOMEMLIMIT: 48MiB
+      GOMAXPROCS: "1"
+    volumes:
+      - ${VPMON_HOME:-/opt/vpserver-monitoring}/current/vpmon:/app/vpmon:ro
+      - ${VPMON_HOME:-/opt/vpserver-monitoring}/data:/data
+      - /sys/fs/cgroup:/host/cgroup:ro
+      - sizes:/sizes:ro
+    networks: [edge, docker, whatsapp]
+    depends_on: [dockerproxy]
+    healthcheck:
+      test: ["CMD", "/app/vpmon", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: *logging
+
+  dockerproxy:
+    image: wollomatic/socket-proxy:1
+    container_name: vpserver-dockerproxy
+    user: "65534:${DOCKER_GID:-988}" # nobody + grupo docker (só para abrir o socket)
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 32m
+    cpus: 0.2
+    cpu_shares: 128
+    command:
+      - -loglevel=WARN
+      - -listenip=0.0.0.0
+      - -allowfrom=vpserver-monitor
+      # ^ e $ são postos pelo proxy; nada de exec, de inspect (que mostraria o env), de stop, rm ou create
+      - -allowGET=(/v1\.[0-9]+)?/(_ping|version|info|system/df|events|containers/json|containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/logs)
+      - -allowHEAD=(/v1\.[0-9]+)?/_ping
+      # a única escrita: o botão Pausar/Retomar das apps (o painel recusa pausar a si mesmo)
+      - -allowPOST=(/v1\.[0-9]+)?/containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/(pause|unpause)
+      - -shutdowngracetime=5
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker]
+    logging: *logging
+
+  sizer:
+    # Anota só o TAMANHO dos logs do Docker (o painel não tem permissão para
+    # olhar /var/lib/docker/containers, onde também ficam as configs com senhas).
+    # Sem rede, sem capability, só leitura; escreve uma lista "tamanho caminho".
+    image: busybox:1.37-musl
+    container_name: vpserver-sizer
+    restart: unless-stopped
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m
+    cpus: 0.1
+    cpu_shares: 64
+    command:
+      - sh
+      - -c
+      - while :; do stat -c '%s %n' /logs/*/*-json.log* > /out/.tmp 2>/dev/null; mv /out/.tmp /out/logsizes.txt; sleep 300; done
+    volumes:
+      - /var/lib/docker/containers:/logs:ro
+      - sizes:/out
+    logging: *logging
+
+  tunnel:
+    image: cloudflare/cloudflared:2026.9.1
+    container_name: vpserver-tunnel
+    restart: unless-stopped
+    # sem domínio: VPMON_TUNNEL_COMMAND="tunnel --no-autoupdate --url http://vpserver-monitor:8080"
+    command: ${VPMON_TUNNEL_COMMAND:-tunnel --no-autoupdate run}
+    environment:
+      TUNNEL_TOKEN: ${VPMON_TUNNEL_TOKEN:-}
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    cpu_shares: 128
+    networks: [edge]
+    depends_on: [monitor]
+    logging: *logging
+
+  whatsapp:
+    # WhatsApp das notificações: Evolution API v2. Só o painel
+    # fala com ela, pela rede vpserver-whatsapp; não publica porta. A conexão
+    # (QR code), os destinos e o que avisar ficam na aba Notificações.
+    image: evoapicloud/evolution-api:v2.3.7 # versão fixa: "latest" mudaria sozinha num restart
+    container_name: vpserver-whatsapp
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    cpus: 0.5
+    cpu_shares: 128
+    environment:
+      SERVER_TYPE: http
+      SERVER_PORT: "8080"
+      SERVER_URL: http://vpserver-whatsapp:8080
+      AUTHENTICATION_API_KEY: ${VPMON_WA_KEY:-}
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${VPMON_WA_DB_PASSWORD:-}@vpserver-whatsapp-db:5432/evolution?schema=public
+      DATABASE_CONNECTION_CLIENT_NAME: vpserver
+      # o painel só manda mensagem: nada de guardar conversa, contato ou histórico
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+      CACHE_REDIS_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
+      CONFIG_SESSION_PHONE_CLIENT: VPServer # nome em "Aparelhos conectados" no celular
+      CONFIG_SESSION_PHONE_NAME: Chrome
+      DEL_INSTANCE: "false"
+      QRCODE_LIMIT: "30"
+      TELEMETRY_ENABLED: "false"
+      WEBHOOK_GLOBAL_ENABLED: "false"
+      WEBSOCKET_ENABLED: "false"
+      LOG_LEVEL: ERROR,WARN
+      LOG_BAILEYS: error
+      LANGUAGE: pt-BR
+      TZ: ${VPMON_TZ:-America/Sao_Paulo}
+    volumes:
+      - whatsapp-instances:/evolution/instances
+    networks: [whatsapp, whatsapp-db]
+    depends_on:
+      whatsapp-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging: *logging
+
+  whatsapp-db:
+    # banco só da Evolution (sessão do WhatsApp); rede interna, sem saída
+    image: postgres:16-alpine
+    container_name: vpserver-whatsapp-db
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 192m
+    cpus: 0.3
+    cpu_shares: 128
+    command: ["postgres", "-c", "shared_buffers=16MB", "-c", "max_connections=20", "-c", "work_mem=2MB"]
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_DB: evolution
+      POSTGRES_PASSWORD: ${VPMON_WA_DB_PASSWORD:-}
+    volumes:
+      - whatsapp-db:/var/lib/postgresql/data
+    networks: [whatsapp-db]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging: *logging
+
+volumes:
+  sizes:
+    name: vpserver-monitoring_sizes
+  whatsapp-instances:
+    name: vpserver-monitoring_whatsapp-instances
+  whatsapp-db:
+    name: vpserver-monitoring_whatsapp-db
+
+networks:
+  edge:
+    name: vpserver-edge
+  docker:
+    name: vpserver-docker
+    internal: true # sem saída para a internet: só o painel fala com o proxy
+  whatsapp:
+    name: vpserver-whatsapp # painel ↔ Evolution (a Evolution precisa de internet para o WhatsApp)
+  whatsapp-db:
+    name: vpserver-whatsapp-db
+    internal: true # Evolution ↔ banco, sem saída
