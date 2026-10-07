@@ -2698,12 +2698,12 @@
       const apps = clLogApps(d);
       const logsTotal = apps.reduce((s, g) => s + g.size, 0);
       const freeable = d.buildCache + d.danglingSize + logsTotal;
-      const item = (key, checked, size, extra, disabledWhy) => {
+      const item = (key, checked, size, extra, disabledWhy, sub) => {
         const it = CL[key];
         const off = !can || !!disabledWhy;
         return `<div class="cl-item${checked && !off ? ' on' : ''}"><label class="cl-head">
           <input type="checkbox" class="sw" data-cl="${key}" ${checked && !off ? 'checked' : ''} ${off ? 'disabled' : ''}>
-          <span class="cl-t">${icon(it.icon)}<b>${it.name}</b></span><b class="num cl-size">${size}</b></label>
+          <span class="cl-t">${icon(it.icon)}<b>${it.name}</b></span><span class="cl-size"><b class="num">${size}</b>${sub ? `<small>${sub}</small>` : ''}</span></label>
           <p class="muted cl-d">${esc(it.desc)}</p>
           <p class="cl-cons">${icon('warn')}<span>${esc(it.cons)}</span></p>
           ${disabledWhy ? `<p class="muted cl-why">${esc(disabledWhy)}</p>` : ''}${extra || ''}</div>`;
@@ -2723,7 +2723,8 @@
         <section class="card"><div class="card-h"><h2>${icon('broom')}O que dá para limpar</h2></div>
           <div class="cl-items">
             ${item('build_cache', sel.build, bytes(d.buildCache), '', d.buildCache ? '' : 'Nada para limpar agora.')}
-            ${item('dangling', sel.dangling, `${bytes(d.danglingSize)}${d.danglingCount ? ` · ${d.danglingCount} imagem(ns)` : ''}`, '', d.danglingCount ? '' : 'Nenhuma imagem sem nome agora.')}
+            ${item('dangling', sel.dangling, bytes(d.danglingSize), '', d.danglingCount ? '' : 'Nenhuma imagem sem nome agora.',
+              d.danglingCount ? (d.danglingCount === 1 ? '1 imagem' : `${d.danglingCount} imagens`) : '')}
             ${item('logs', sel.apps.size > 0, bytes(logsTotal), logsList,
               !c.logsHelper ? 'O ajudante que limpa os logs (vpserver-cleaner) não está rodando. Ele sobe junto com o painel a partir desta versão: no servidor, docker compose up -d.'
                 : !d.logsKnown ? 'O tamanho dos logs ainda não foi medido (o vpserver-sizer mede a cada 5 min).' : apps.length ? '' : 'Nenhum log para limpar.')}
