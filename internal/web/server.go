@@ -98,6 +98,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/fleet/report", s.fleetReport)
 	mux.HandleFunc("POST /api/fleet/notify", s.fleetNotify)
 	mux.HandleFunc("POST /api/fleet/bye", s.fleetBye)
+	mux.HandleFunc("POST /api/fleet/poll", s.fleetPoll)
+	mux.HandleFunc("POST /api/fleet/reply", s.fleetReplyView)
 	mux.HandleFunc("POST /api/logout", s.logout)
 	mux.HandleFunc("GET /api/me", s.private(s.me))
 	mux.HandleFunc("POST /api/password", s.private(s.changePassword))
@@ -128,6 +130,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/fleet/disconnect", admin(s.fleetDisconnect))
 	mux.HandleFunc("POST /api/fleet/whatsapp", admin(s.fleetUseWhatsApp))
 	mux.HandleFunc("GET /api/fleet/servers", s.private(s.fleetServers))
+	mux.HandleFunc("GET /api/fleet/view/{id}/{rest...}", s.private(s.fleetView))
+	mux.HandleFunc("POST /api/fleet/view/{id}/{rest...}", s.private(s.fleetView))
+	mux.HandleFunc("POST /api/fleet/share", admin(s.fleetShare))
 	// ações nas aplicações e gestão de usuários: por permissão
 	mux.HandleFunc("POST /api/apps/pause", s.private(need(User.CanAct, msgNoActions, s.pauseApp)))
 	mux.HandleFunc("GET /api/cleanup", s.private(s.cleanupGet))
