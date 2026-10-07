@@ -706,14 +706,6 @@ a.btn { text-decoration: none; color: inherit; }
 .dot.warn { background: var(--warning); }
 .dot.crit { background: var(--critical); }
 .dot.off { background: var(--muted); }
-.srv-switch { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
-.chip-srv { display: inline-flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);
-  background: var(--surface); color: inherit; font: inherit; cursor: pointer; flex: none; text-align: left; }
-.chip-srv span { display: flex; flex-direction: column; line-height: 1.2; }
-.chip-srv b { font-size: .86rem; }
-.chip-srv small { color: var(--muted); font-size: .72rem; }
-.chip-srv.on { border-color: var(--accent); background: var(--accent-soft); }
-.chip-srv:disabled { opacity: .55; cursor: not-allowed; }
 .cf-where { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); font-size: .84rem; }
 .cf-where .i { flex: none; }
 @media (max-width: 720px) {
