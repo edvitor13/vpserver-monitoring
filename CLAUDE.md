@@ -65,6 +65,12 @@ mesma entrega quando são do mesmo assunto; assunto novo ganha issue própria.
 - **Cores só por variável CSS** (`app.css`), com tema claro e escuro. Status
   sempre com ícone + texto.
 - **Toda tela funciona no celular** (390 px de largura, menu embaixo).
+- **Grid de uma coluna sempre com a coluna base** (`grid-template-columns:
+  minmax(0, 1fr)`; a lista fica no fim do `app.css`). Sem ela, a coluna
+  implícita cresce até o conteúdo mais largo e a página inteira passa da tela
+  do celular (aconteceu na Limpeza). Texto longo: `min-width: 0` no filho de
+  flex e reticências ou quebra. Antes de entregar tela, meça no celular (390 px)
+  com dados longos: `document.documentElement.scrollWidth` igual à largura.
 - **Testes:** todo comportamento novo tem teste em Go; mudanças de tela são
   conferidas com captura de tela (computador e celular, claro e escuro).
 
