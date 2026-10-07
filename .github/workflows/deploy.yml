@@ -1,3 +1,4 @@
+# Em pull request: só os testes (sem segredos, sem imagem, sem deploy).
 # A cada push na master:
 #  1. test   — gofmt, vet, testes e sintaxe do JS.
 #  2. image  — publica a imagem multi-arquitetura (arm64 + amd64) em
@@ -18,11 +19,13 @@ name: deploy
 on:
   push:
     branches: [master]
+  pull_request:
   workflow_dispatch:
 
 concurrency:
-  group: deploy
-  cancel-in-progress: false
+  # PRs não esperam na fila do deploy (e um push novo no PR cancela o teste velho)
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -46,6 +49,7 @@ jobs:
 
   image:
     needs: test
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -84,7 +88,7 @@ jobs:
 
   deploy:
     needs: test
-    if: ${{ vars.VPSERVER_DEPLOY == 'true' }}
+    if: ${{ github.event_name != 'pull_request' && vars.VPSERVER_DEPLOY == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
