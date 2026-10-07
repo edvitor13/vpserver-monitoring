@@ -740,6 +740,10 @@ Variáveis internas (já definidas no `compose.yml`): `VPMON_LISTEN`, `VPMON_PRO
 
 Requisitos: Go 1.23+, Node (só para `node --check`), Python 3 (script de deploy).
 
+Toda alteração segue o fluxo **issue → branch → commits detalhados → PR → merge**
+(o merge na `master` faz o deploy). O passo a passo e as regras do projeto, inclusive
+para quem trabalha com IA, estão no [`CLAUDE.md`](CLAUDE.md).
+
 ```bash
 go test ./...            # parsers testados com amostras reais do servidor
 go vet ./...
