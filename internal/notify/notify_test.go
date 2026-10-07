@@ -279,7 +279,7 @@ func TestSecurityAfterFiveFailures(t *testing.T) {
 	s, _, wa, _ := setup(t, "2026-10-06 14:00")
 	s.status = Status{Service: true, Exists: true, State: "open"}
 	for i := 0; i < 7; i++ {
-		s.Security("login_fail", "1.2.3.4")
+		s.Security("login_fail", "1.2.3.4", "")
 	}
 	time.Sleep(100 * time.Millisecond)
 	got := wa.take()

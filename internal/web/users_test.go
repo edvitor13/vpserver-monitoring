@@ -11,8 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/edvitor13/vpserver-monitoring/internal/ai"
 )
 
 func admin(a *Auth, name string) User {
@@ -170,5 +173,72 @@ func TestResetPasswordOffline(t *testing.T) {
 	}
 	if canLogin(a, "ana", "senha-do-env-1") {
 		t.Fatal("a senha antiga não vale mais")
+	}
+}
+
+// Cada rota respeita a permissão de quem está logado (a tela esconde, a API recusa).
+func TestRoutePermissions(t *testing.T) {
+	a := NewAuth("chefe", "senha-do-env-1", "s", true, t.TempDir(), false)
+	boss := admin(a, "chefe")
+	for _, c := range []struct {
+		name string
+		p    Perms
+	}{{"leitor", Perms{}}, {"operador", Perms{Actions: true}}, {"gerente", Perms{Manage: true}}} {
+		_, pass, err := a.CreateUser(boss, c.name, c.p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.ChangePassword(c.name, pass, "senha-propria-1", ""); err != nil { // sai da senha provisória
+			t.Fatal(err)
+		}
+	}
+	h := New(nil, a, true, ai.Config{}, "", nil).Handler()
+	call := func(user, method, path, body string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("X-Requested-With", "vpmon")
+		req.AddCookie(sessionCookie(a, user))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	cases := []struct {
+		user, method, path, body string
+		want                     int
+	}{
+		{"leitor", "GET", "/api/me", "", 200},
+		{"leitor", "POST", "/api/apps/pause", `{}`, 403},
+		{"leitor", "GET", "/api/settings", "", 403},
+		{"leitor", "GET", "/api/notify", "", 403},
+		{"leitor", "GET", "/api/users", "", 403},
+		{"operador", "POST", "/api/apps/pause", `{}`, 400}, // passou da permissão (faltou a app)
+		{"operador", "GET", "/api/users", "", 403},
+		{"gerente", "GET", "/api/users", "", 200},
+		{"gerente", "POST", "/api/users", `{"name":"novato"}`, 200},
+		{"gerente", "POST", "/api/users", `{"name":"chefao","admin":true}`, 403},
+		{"gerente", "POST", "/api/users/delete", `{"name":"chefe"}`, 403},
+		{"gerente", "GET", "/api/settings", "", 403},
+		{"chefe", "GET", "/api/settings", "", 200},
+		{"chefe", "POST", "/api/users/update", `{"name":"leitor","actions":true}`, 200},
+		{"chefe", "POST", "/api/users/delete", `{"name":"chefe"}`, 400},
+	}
+	for _, c := range cases {
+		if got := call(c.user, c.method, c.path, c.body); got != c.want {
+			t.Errorf("%s %s %s: %d, queria %d", c.user, c.method, c.path, got, c.want)
+		}
+	}
+	// /api/me devolve as permissões para a tela
+	req := httptest.NewRequest("GET", "/api/me", nil)
+	req.AddCookie(sessionCookie(a, "operador"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var me struct {
+		User    string `json:"user"`
+		Admin   bool   `json:"admin"`
+		Actions bool   `json:"actions"`
+		Manage  bool   `json:"manage"`
+	}
+	json.NewDecoder(rec.Body).Decode(&me)
+	if me.User != "operador" || me.Admin || !me.Actions || me.Manage {
+		t.Fatalf("me: %+v", me)
 	}
 }

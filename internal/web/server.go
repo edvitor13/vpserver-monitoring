@@ -36,6 +36,7 @@ type Server struct {
 	nt        *notify.Service // notificações pelo WhatsApp (nil = sem)
 	sendLimit chatLimiter     // "enviar agora" da aba Notificações
 	pauseLim  chatLimiter     // pausar/retomar app
+	usersLim  chatLimiter     // criar/editar/remover usuários
 }
 
 type asset struct {
@@ -88,15 +89,24 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/system", s.private(s.system))
 	mux.HandleFunc("GET /api/chat/status", s.private(s.chatStatus))
 	mux.HandleFunc("POST /api/chat", s.private(s.chat))
-	mux.HandleFunc("GET /api/settings", s.private(s.settingsGet))
-	mux.HandleFunc("POST /api/settings/ai", s.private(s.settingsAI))
-	mux.HandleFunc("POST /api/apps/pause", s.private(s.pauseApp))
-	mux.HandleFunc("GET /api/notify", s.private(s.notifyGet))
-	mux.HandleFunc("POST /api/notify/config", s.private(s.notifyConfig))
-	mux.HandleFunc("POST /api/notify/connect", s.private(s.notifyConnect))
-	mux.HandleFunc("POST /api/notify/logout", s.private(s.notifyLogout))
-	mux.HandleFunc("GET /api/notify/groups", s.private(s.notifyGroups))
-	mux.HandleFunc("POST /api/notify/send", s.private(s.notifySend))
+	// configurações do painel (IA e WhatsApp): só administradores
+	admin := func(h http.HandlerFunc) http.HandlerFunc { return s.private(need(isAdmin, msgAdminOnly, h)) }
+	mux.HandleFunc("GET /api/settings", admin(s.settingsGet))
+	mux.HandleFunc("POST /api/settings/ai", admin(s.settingsAI))
+	mux.HandleFunc("GET /api/notify", admin(s.notifyGet))
+	mux.HandleFunc("POST /api/notify/config", admin(s.notifyConfig))
+	mux.HandleFunc("POST /api/notify/connect", admin(s.notifyConnect))
+	mux.HandleFunc("POST /api/notify/logout", admin(s.notifyLogout))
+	mux.HandleFunc("GET /api/notify/groups", admin(s.notifyGroups))
+	mux.HandleFunc("POST /api/notify/send", admin(s.notifySend))
+	// ações nas aplicações e gestão de usuários: por permissão
+	mux.HandleFunc("POST /api/apps/pause", s.private(need(User.CanAct, msgNoActions, s.pauseApp)))
+	manage := func(h http.HandlerFunc) http.HandlerFunc { return s.private(need(User.CanManage, msgNoManage, h)) }
+	mux.HandleFunc("GET /api/users", manage(s.usersList))
+	mux.HandleFunc("POST /api/users", manage(s.usersCreate))
+	mux.HandleFunc("POST /api/users/update", manage(s.usersUpdate))
+	mux.HandleFunc("POST /api/users/reset", manage(s.usersReset))
+	mux.HandleFunc("POST /api/users/delete", manage(s.usersDelete))
 	return secureHeaders(withGzip(mux))
 }
 
@@ -182,9 +192,9 @@ func (s *Server) origin(r *http.Request) string {
 }
 
 // security avisa as notificações (senhas erradas, login, troca de senha).
-func (s *Server) security(kind, ip string) {
+func (s *Server) security(kind, ip, user string) {
 	if s.nt != nil {
-		s.nt.Security(kind, ip)
+		s.nt.Security(kind, ip, user)
 	}
 }
 
@@ -230,7 +240,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		s.auth.Fail(ip)
 		slog.Warn("login falhou", "ip", ip)
-		s.security("login_fail", ip)
+		s.security("login_fail", ip, "")
 		time.Sleep(600 * time.Millisecond)
 		apiError(w, http.StatusUnauthorized, "bad_credentials", "Usuário ou senha incorretos.")
 		return
@@ -239,7 +249,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.auth.Issue(w, u.Name)
 	s.auth.MarkLogin(u.Name)
 	slog.Info("login", "ip", ip, "usuario", u.Name)
-	s.security("login", ip)
+	s.security("login", ip, u.Name)
 	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "mustChange": u.MustChange})
 }
 
@@ -311,7 +321,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	s.auth.Reset(ip)
 	s.auth.Issue(w, u.Name)
 	slog.Info("senha trocada pela tela", "ip", ip, "usuario", u.Name)
-	s.security("password", ip)
+	s.security("password", ip, u.Name)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": u.Name})
 }
 
@@ -421,11 +431,12 @@ func (s *Server) pauseApp(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadGateway, "docker_error", "O Docker recusou: "+err.Error())
 		return
 	}
-	slog.Info("app "+verb+" pela tela", "app", body.App, "conteineres", strings.Join(names, ","), "ip", ip)
+	who := userOf(r).Name
+	slog.Info("app "+verb+" pela tela", "app", body.App, "conteineres", strings.Join(names, ","), "por", who, "ip", ip)
 	if s.nt != nil && len(names) > 0 {
 		emoji := map[bool]string{true: "⏸️", false: "▶️"}[body.Pause]
-		s.nt.Audit("pauses", fmt.Sprintf("%s %s pela tela", body.App, verb), fmt.Sprintf("%s *%s %s pelo painel · %s*\nContêineres: %s (IP %s).",
-			emoji, body.App, verb, s.mon.Overview().Server.Name, strings.Join(names, ", "), ip))
+		s.nt.Audit("pauses", fmt.Sprintf("%s %s pela tela", body.App, verb), fmt.Sprintf("%s *%s %s pelo painel · %s*\nContêineres: %s.\nPor %s (IP %s).",
+			emoji, body.App, verb, s.mon.Overview().Server.Name, strings.Join(names, ", "), who, ip))
 	}
 	res := map[string]any{"ok": true, "containers": names}
 	if err != nil {

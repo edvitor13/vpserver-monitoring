@@ -485,8 +485,9 @@ func (s *Service) trackApps(now time.Time, o monitor.Overview) []message {
 
 // --- segurança ---------------------------------------------------------------------------
 
-// Security recebe os eventos do login: "login_fail", "login" e "password".
-func (s *Service) Security(kind, ip string) {
+// Security recebe os eventos do login: "login_fail", "login" e "password"
+// (user = quem entrou ou trocou a senha; vazio em senha errada).
+func (s *Service) Security(kind, ip, user string) {
 	now := s.now()
 	s.mu.Lock()
 	var m *message
@@ -506,12 +507,12 @@ func (s *Service) Security(kind, ip string) {
 		}
 	case "login":
 		if s.on("logins") {
-			m = &message{kind: "logins", title: "Login no painel", text: fmt.Sprintf("🔐 Login no painel (IP %s).", ip)}
+			m = &message{kind: "logins", title: "Login no painel: " + user, text: fmt.Sprintf("🔐 Login no painel: *%s* (IP %s).", user, ip)}
 		}
 	case "password":
 		if s.on("security") {
-			m = &message{kind: "security", urgent: true, title: "Senha do painel trocada",
-				text: fmt.Sprintf("🔐 *Segurança do painel*\nA senha do painel foi trocada (IP %s). Se não foi você, troque de novo já.", ip)}
+			m = &message{kind: "security", urgent: true, title: "Senha trocada: " + user,
+				text: fmt.Sprintf("🔐 *Segurança do painel*\nA senha de *%s* foi trocada (IP %s). Se não foi essa pessoa, troque de novo já.", user, ip)}
 		}
 	}
 	s.dirty = true
