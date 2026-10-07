@@ -73,9 +73,9 @@ func (s *Service) Relay(ctx context.Context, from, text string) error {
 		}
 	}
 	s.st.Sends = keep
-	if len(s.st.Sends) >= maxPerHour {
+	if lim := s.cfg.perHour(); len(s.st.Sends) >= lim {
 		s.mu.Unlock()
-		return fmt.Errorf("o painel central passou de %d mensagens na última hora", maxPerHour)
+		return fmt.Errorf("o painel central passou de %d mensagens na última hora", lim)
 	}
 	s.st.Sends = append(s.st.Sends, now.Unix())
 	to := s.cfg.Recipients

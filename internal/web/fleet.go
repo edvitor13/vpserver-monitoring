@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -188,17 +189,45 @@ func (s *Server) fleetTokenCreate(w http.ResponseWriter, r *http.Request) {
 	var b struct {
 		Name     string `json:"name"`
 		WhatsApp bool   `json:"whatsapp"`
+		Limit    int    `json:"relayLimit"`
 	}
 	if !s.fleetBody(w, r, &b) {
 		return
 	}
-	v, plain, err := s.fl.Central.Create(b.Name, userOf(r).Name, b.WhatsApp)
+	v, plain, err := s.fl.Central.Create(b.Name, userOf(r).Name, b.WhatsApp, b.Limit)
 	if err != nil {
 		apiError(w, http.StatusBadRequest, "bad_token_request", err.Error())
 		return
 	}
 	s.audit(r, "Token de servidor criado", "Para conectar o servidor "+v.Name+" a este painel"+map[bool]string{true: " (pode usar o WhatsApp daqui).", false: "."}[v.WhatsApp])
 	writeJSON(w, http.StatusOK, map[string]any{"token": v, "secret": plain})
+}
+
+// fleetTokenUpdate muda a permissão de WhatsApp e o limite por hora de um servidor.
+func (s *Server) fleetTokenUpdate(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		ID       string `json:"id"`
+		WhatsApp bool   `json:"whatsapp"`
+		Limit    int    `json:"relayLimit"`
+	}
+	if !s.fleetBody(w, r, &b) {
+		return
+	}
+	v, err := s.fl.Central.Update(b.ID, b.WhatsApp, b.Limit)
+	switch {
+	case errors.Is(err, fleet.ErrNoToken):
+		apiError(w, http.StatusNotFound, "not_found", "Token não encontrado.")
+		return
+	case err != nil:
+		apiError(w, http.StatusBadRequest, "bad_token_request", err.Error())
+		return
+	}
+	what := "não pode usar o WhatsApp daqui"
+	if v.WhatsApp {
+		what = fmt.Sprintf("pode usar o WhatsApp daqui, até %d avisos por hora", v.Limit)
+	}
+	s.audit(r, "Servidor conectado ajustado", "O servidor "+v.Name+" agora "+what+".")
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "token": v})
 }
 
 func (s *Server) fleetTokenRevoke(w http.ResponseWriter, r *http.Request) {

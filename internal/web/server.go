@@ -126,6 +126,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/fleet", admin(s.fleetGet))
 	mux.HandleFunc("POST /api/fleet/tokens", admin(s.fleetTokenCreate))
 	mux.HandleFunc("POST /api/fleet/tokens/revoke", admin(s.fleetTokenRevoke))
+	mux.HandleFunc("POST /api/fleet/tokens/update", admin(s.fleetTokenUpdate))
 	mux.HandleFunc("POST /api/fleet/connect", admin(s.fleetConnect))
 	mux.HandleFunc("POST /api/fleet/disconnect", admin(s.fleetDisconnect))
 	mux.HandleFunc("POST /api/fleet/whatsapp", admin(s.fleetUseWhatsApp))

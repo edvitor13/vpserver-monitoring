@@ -26,7 +26,9 @@ import (
 )
 
 const (
-	maxPerHour     = 30 // mensagens por hora (fora os testes): segura rajada e risco de bloqueio
+	maxPerHour     = 30 // mensagens por hora (padrão; ajustável em Notificações): segura rajada e risco de bloqueio
+	minPerHour     = 5
+	topPerHour     = 500
 	maxRecipients  = 10
 	maxLog         = 60
 	aiPerDay       = 6 // diagnósticos de incidente por dia
@@ -64,11 +66,20 @@ type Config struct {
 	Enabled    bool            `json:"enabled"`
 	Recipients []Recipient     `json:"recipients"`
 	Events     map[string]bool `json:"events"`
-	DailyAt    string          `json:"dailyAt"`   // "08:00": resumos e análises agendadas
-	Quiet      bool            `json:"quiet"`     // no silêncio, só o urgente sai na hora
-	QuietFrom  string          `json:"quietFrom"` // "22:00"
-	QuietTo    string          `json:"quietTo"`   // "07:00"
-	PanelURL   string          `json:"panelUrl"`  // link nas mensagens (a tela manda o endereço dela)
+	DailyAt    string          `json:"dailyAt"`    // "08:00": resumos e análises agendadas
+	Quiet      bool            `json:"quiet"`      // no silêncio, só o urgente sai na hora
+	QuietFrom  string          `json:"quietFrom"`  // "22:00"
+	QuietTo    string          `json:"quietTo"`    // "07:00"
+	PanelURL   string          `json:"panelUrl"`   // link nas mensagens (a tela manda o endereço dela)
+	MaxPerHour int             `json:"maxPerHour"` // mensagens por hora por este WhatsApp (0 = padrão)
+}
+
+// perHour é o limite de mensagens por hora que vale agora.
+func (c Config) perHour() int {
+	if c.MaxPerHour <= 0 {
+		return maxPerHour
+	}
+	return c.MaxPerHour
 }
 
 func defaultConfig() Config {
@@ -891,10 +902,10 @@ func (s *Service) deliver(ctx context.Context, m message) bool {
 		}
 	}
 	s.st.Sends = keep
-	if len(s.st.Sends) >= maxPerHour && !m.manual {
+	if len(s.st.Sends) >= cfg.perHour() && !m.manual {
 		s.markSent(m, now) // não insiste: passou do limite, fica só no registro
 		s.addLog(LogEntry{T: now.Unix(), Kind: m.kind, Title: m.title, Text: clipText(m.text), Status: "skipped",
-			Error: fmt.Sprintf("passou de %d mensagens na última hora", maxPerHour)})
+			Error: fmt.Sprintf("passou de %d mensagens na última hora", cfg.perHour())})
 		s.mu.Unlock()
 		return false
 	}
