@@ -97,6 +97,7 @@
     qr: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     play: '<polygon points="6 4 20 12 6 20 6 4"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
   };
   const icon = (n, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
   const STATUS = { ok: ['ok', 'OK'], warn: ['warn', 'Atenção'], crit: ['crit', 'Crítico'], info: ['info', 'Info'], off: ['pause', 'Parado'] };
@@ -317,6 +318,15 @@
     ['system', 'Sistema', 'server', 'Sistema'], ['limits', 'Limites', 'load', 'Limites'],
     ['ai', 'IA', 'spark', 'IA'], ['notify', 'Notificações', 'bell', 'Avisos']]; // IA e WhatsApp juntas, no fim
   const BNAV = ['overview', 'apps', 'infos', 'ai']; // no celular, o resto fica em "Mais"
+  // o que o usuário logado pode (a API recusa do mesmo jeito; aqui só some da tela)
+  const can = {
+    admin: () => !!(S.me && S.me.admin),
+    act: () => !!(S.me && (S.me.admin || S.me.actions)),
+    manage: () => !!(S.me && (S.me.admin || S.me.manage)),
+  };
+  const roleText = (u) => (u.admin ? 'Administrador'
+    : [u.actions && 'Ações nas apps', u.manage && 'Gerencia usuários'].filter(Boolean).join(' · ') || 'Só leitura');
+  const visibleTabs = () => TABS.filter(([k]) => k !== 'notify' || can.admin());
   const tabHref = (k) => `#/${k === 'overview' ? '' : k}`;
   const countHTML = (k) => (k === 'infos' ? '<span class="count infos-count" hidden></span>' : '');
   function renderShell() {
@@ -330,12 +340,13 @@
           <div class="bar-actions">
             <span id="hdr-status"></span>
             <span class="updated" id="hdr-upd"></span>
+            <button class="who" type="button" data-act="settings" title="${esc(roleText(S.me || {}))} · Minha conta">${icon('user')}<span>${esc((S.me || {}).user || '')}</span></button>
             <button class="icon-btn" type="button" data-act="theme" aria-label="Trocar tema" title="Trocar tema">${icon(isDark() ? 'sun' : 'moon')}</button>
             <button class="icon-btn" type="button" data-act="settings" aria-label="Configurações" title="Configurações">${icon('gear')}</button>
             <button class="icon-btn" type="button" data-act="logout" aria-label="Sair" title="Sair">${icon('logout')}</button>
           </div>
         </div>
-        <nav class="tabs" aria-label="Seções">${TABS.map(([k, l, ic]) => `<a class="tab" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}${l}${countHTML(k)}</a>`).join('')}</nav>
+        <nav class="tabs" aria-label="Seções">${visibleTabs().map(([k, l, ic]) => `<a class="tab" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}${l}${countHTML(k)}</a>`).join('')}</nav>
       </div></header>
       <main id="view"></main>
       <nav class="bnav" aria-label="Seções">${BNAV.map((k) => { const [, , ic, short] = TABS.find((t) => t[0] === k); return `<a class="bn" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${short}</span>${countHTML(k)}</a>`; }).join('')}
@@ -381,8 +392,9 @@
     sh.setAttribute('role', 'dialog');
     sh.setAttribute('aria-modal', 'true');
     sh.setAttribute('aria-label', 'Mais seções');
-    sh.innerHTML = `<div class="sheet-grip"></div><div class="sheet-grid">
-      ${TABS.filter(([k]) => !BNAV.includes(k)).map(([k, l, ic]) => `<a class="sheet-item" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${l}</span></a>`).join('')}
+    sh.innerHTML = `<div class="sheet-grip"></div>
+      <div class="sheet-who">${icon('user')}<span><b>${esc(S.me.user)}</b> · ${esc(roleText(S.me))}</span></div><div class="sheet-grid">
+      ${visibleTabs().filter(([k]) => !BNAV.includes(k)).map(([k, l, ic]) => `<a class="sheet-item" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${l}</span></a>`).join('')}
       </div><div class="sheet-sep"></div><div class="sheet-grid">
       <button class="sheet-item" type="button" data-act="settings">${icon('gear')}<span>Configurações</span></button>
       <button class="sheet-item" type="button" data-act="theme">${icon(isDark() ? 'sun' : 'moon')}<span>${isDark() ? 'Tema claro' : 'Tema escuro'}</span></button>
@@ -396,7 +408,7 @@
   function parseHash() {
     const h = location.hash.replace(/^#\/?/, '');
     const [tab, q] = h.split('?');
-    return { tab: TABS.some(([k]) => k === tab) ? tab : 'overview', params: new URLSearchParams(q || '') };
+    return { tab: visibleTabs().some(([k]) => k === tab) ? tab : 'overview', params: new URLSearchParams(q || '') };
   }
   function route() {
     const { tab, params } = parseHash();
@@ -612,7 +624,7 @@
   };
   // Pausar/Retomar: só apps do Docker, nunca o próprio painel
   function pauseBtns(a, cls = 'sm') {
-    if (a.self || (a.kind !== 'compose' && a.kind !== 'standalone')) return '';
+    if (!can.act() || a.self || (a.kind !== 'compose' && a.kind !== 'standalone')) return '';
     const b = (p, ic, l) => `<button class="btn ${cls}" type="button" data-act="pause" data-v="${esc(a.key)}" data-pause="${p}">${icon(ic)}${l}</button>`;
     return (a.paused ? b(0, 'play', 'Retomar') : '') + (a.running ? b(1, 'pause', 'Pausar') : '');
   }
@@ -883,15 +895,21 @@
     clearTimeout(pollT);
     let me = {};
     try { me = await api('/api/me'); } catch { return; }
+    S.me = me;
+    const steps = me.admin ? ['Acesso', 'IA (opcional)', 'WhatsApp (opcional)'] : ['Crie sua senha'];
     const shell = (step, body) => `<div class="login"><div class="card login-card settings-card">
       <div class="brand"><div class="brand-logo">${icon('logo')}</div>
         <div class="brand-txt"><div class="brand-name">VPServer</div><div class="brand-sub">Primeiro acesso</div></div></div>
-      <div class="steps"><span class="${step === 1 ? 'on' : 'done'}">1 · Acesso</span><span class="${step === 2 ? 'on' : step > 2 ? 'done' : ''}">2 · IA (opcional)</span><span class="${step === 3 ? 'on' : ''}">3 · WhatsApp (opcional)</span></div>
+      <div class="steps">${steps.map((l, i) => `<span class="${step === i + 1 ? 'on' : step > i + 1 ? 'done' : ''}">${i + 1} · ${l}</span>`).join('')}</div>
       ${body}</div></div>`;
+    const intro = me.passwordSource === 'env'
+      ? 'O painel está com a senha inicial. Escolha o usuário e uma senha nova para continuar — até lá, nenhum dado do servidor aparece.'
+      : 'Sua senha é provisória (quem cadastrou você a recebeu). Crie a sua para continuar — até lá, nenhum dado do servidor aparece.';
     $('#app').innerHTML = shell(1, `<h2 style="margin:14px 0 4px">Crie o seu acesso</h2>
-      <p class="muted" style="margin:0 0 14px;font-size:.86rem">O painel está com a senha inicial. Escolha o usuário e uma senha nova para continuar — até lá, nenhum dado do servidor aparece.</p>
+      <p class="muted" style="margin:0 0 14px;font-size:.86rem">${esc(intro)}</p>
       ${accessFormHTML(me.user || 'admin', true)}`);
     bindAccess(prefill, async () => {
+      if (!me.admin) { start(); return; } // IA e WhatsApp são do administrador
       let st = { ai: { enabled: false } };
       try { st = await api('/api/settings'); } catch { /* segue */ }
       $('#app').innerHTML = shell(2, `<h2 style="margin:14px 0 4px">Quer usar a IA?</h2>${aiFormHTML(st.ai, true)}
@@ -932,22 +950,29 @@
     }
   }
 
-  // Configurações: Acesso (usuário/senha), IA (chave da DeepSeek) e WhatsApp (conexão das notificações).
+  // Configurações: Minha conta (todos), Usuários (quem gerencia), IA e WhatsApp (administradores).
   async function openSettings(tab = 'acesso') {
     closeDrawer();
     let me = {}, st = { ai: { enabled: false } };
-    try { [me, st] = await Promise.all([api('/api/me'), api('/api/settings')]); } catch { return; }
+    try {
+      me = await api('/api/me');
+      S.me = me;
+      if (me.admin) st = await api('/api/settings');
+    } catch { return; }
+    const tabs = [['acesso', 'Minha conta', true], ['usuarios', 'Usuários', can.manage()], ['ia', 'IA', can.admin()], ['whatsapp', 'WhatsApp', can.admin()]]
+      .filter(([, , ok]) => ok);
+    if (!tabs.some(([k]) => k === tab)) tab = 'acesso';
     const scrim = document.createElement('div');
     scrim.className = 'scrim';
     scrim.dataset.act = 'close';
     const m = document.createElement('div');
     m.className = 'modal';
     m.innerHTML = `<div class="card login-card settings-card" role="dialog" aria-modal="true" aria-labelledby="st-t">
-      <div class="card-h"><h2 id="st-t">${icon('gear')}Configurações</h2><button class="icon-btn" type="button" data-act="close" aria-label="Fechar">${icon('x')}</button></div>
-      <div class="seg" role="tablist" style="margin-bottom:14px">
-        <button type="button" data-act="stab" data-v="acesso" aria-pressed="${tab === 'acesso'}">Acesso</button>
-        <button type="button" data-act="stab" data-v="ia" aria-pressed="${tab === 'ia'}">IA</button>
-        <button type="button" data-act="stab" data-v="whatsapp" aria-pressed="${tab === 'whatsapp'}">WhatsApp</button></div>
+      <div class="card-h"><div><h2 id="st-t">${icon('gear')}Configurações</h2>
+        <div class="muted st-who">${icon('user')}${esc(me.user)} · ${esc(roleText(me))}</div></div>
+        <button class="icon-btn" type="button" data-act="close" aria-label="Fechar">${icon('x')}</button></div>
+      ${tabs.length > 1 ? `<div class="seg" role="tablist" style="margin-bottom:14px">
+        ${tabs.map(([k, l]) => `<button type="button" data-act="stab" data-v="${k}" aria-pressed="${tab === k}">${l}</button>`).join('')}</div>` : ''}
       <div id="st-body"></div></div>`;
     document.body.append(scrim, m);
     S.drawer = { update() {}, reload() {}, destroy() {} };
@@ -955,7 +980,10 @@
       $$('[data-act="stab"]', m).forEach((b) => b.setAttribute('aria-pressed', b.dataset.v === t));
       const body = $('#st-body', m);
       stopWA();
-      if (t === 'ia') {
+      body.onclick = body.onchange = null;
+      if (t === 'usuarios') {
+        usersPanel(body);
+      } else if (t === 'ia') {
         body.innerHTML = aiFormHTML(st.ai, false);
         bindAI((v) => { st.ai = v; }, null);
       } else if (t === 'whatsapp') {
@@ -975,6 +1003,96 @@
     };
     S.settingsTab = show;
     show(tab);
+  }
+
+  // ------------------------------------------------------------------ usuários (Configurações → Usuários)
+  function permBoxes(u) {
+    const me = S.me;
+    const box = (k, label, hint, ok) => `<label class="perm${ok ? '' : ' locked'}"><input type="checkbox" class="sw" data-perm="${k}"
+      ${u[k] || (k !== 'admin' && u.admin) ? 'checked' : ''} ${ok && !(k !== 'admin' && u.admin) ? '' : 'disabled'}>
+      <span><b>${label}</b><small>${hint}</small></span></label>`;
+    return `<div class="perms">
+      ${box('admin', 'Administrador', 'Pode tudo: ações nas apps, usuários, IA e WhatsApp.', me.admin)}
+      ${box('actions', 'Pausar e retomar aplicações', 'Os botões Pausar/Retomar da aba Aplicações.', me.admin || me.actions)}
+      ${box('manage', 'Criar e gerenciar usuários', 'Sem mexer em administradores; só concede o que tem.', true)}</div>`;
+  }
+  const readPerms = (root) => Object.fromEntries($$('[data-perm]', root).map((c) => [c.dataset.perm, c.checked]));
+  const passBox = (name, pass) => `<div class="passbox" role="status"><div><b>Senha provisória de ${esc(name)}</b></div>
+    <div class="passline"><code class="pass">${esc(pass)}</code><button class="btn sm" type="button" data-copy="${esc(pass)}">Copiar</button></div>
+    <div class="muted">Passe só para essa pessoa. No primeiro acesso ela cria a própria senha (esta não aparece de novo).</div></div>`;
+  function usersPanel(body) {
+    const load = async (flash) => {
+      let j;
+      try { j = await api('/api/users'); } catch (ex) {
+        if (ex.message !== 'login') body.innerHTML = `<div class="form-err">${esc(ex.message)}</div>`;
+        return;
+      }
+      const me = S.me;
+      const editable = (u) => u.name !== me.user && (me.admin || !u.admin);
+      body.innerHTML = `${flash || ''}<div class="ulist">${j.users.map((u) => `<div class="urow" data-user="${esc(u.name)}">
+          <div class="urow-h"><div class="urow-n"><span><b>${esc(u.name)}</b>${u.name === me.user ? ' <span class="muted">(você)</span>' : ''}</span>
+            <small>${esc(roleText(u))}${u.mustChange ? ' · senha provisória' : ''} · ${u.lastLogin ? `último acesso ${dt(u.lastLogin)}` : 'nunca entrou'}</small></div>
+            ${editable(u) ? `<div class="controls"><button class="btn sm" type="button" data-u="edit">Permissões</button>
+              <button class="btn sm" type="button" data-u="reset">Nova senha</button>
+              <button class="btn sm" type="button" data-u="del" aria-label="Remover ${esc(u.name)}">Remover</button></div>` : ''}</div>
+          ${editable(u) ? `<div class="urow-edit" hidden>${permBoxes(u)}<div class="controls"><button class="btn primary sm" type="button" data-u="save">Salvar permissões</button></div></div>` : ''}
+        </div>`).join('')}</div>
+        <form class="stack unew" id="unew" autocomplete="off"><h3>${icon('plus')}Novo usuário</h3>
+          <div class="field"><label for="un-name">Nome de usuário</label><input class="input" id="un-name" minlength="3" maxlength="32" required placeholder="ex.: maria" autocapitalize="off" spellcheck="false"></div>
+          ${permBoxes({})}
+          <div class="form-err" id="un-err" role="alert"></div>
+          <button class="btn primary" type="submit">Criar usuário</button>
+          <p class="muted" style="margin:0;font-size:.8rem">Sem nenhuma permissão marcada, a pessoa só vê (dados, logs e o chat com a IA).
+            O painel gera uma senha provisória; a pessoa cria a dela no primeiro acesso.</p></form>`;
+      $('#unew', body).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = $('#un-name', body).value.trim();
+        try {
+          const r = await api('/api/users', { method: 'POST', body: JSON.stringify({ name, ...readPerms($('#unew', body)) }) });
+          load(passBox(r.user.name, r.password));
+        } catch (ex) { if (ex.message !== 'login') $('#un-err', body).textContent = ex.message; }
+      });
+    };
+    body.onchange = (e) => { // administrador pode tudo: marca e trava as outras
+      const c = e.target.closest('[data-perm="admin"]');
+      if (!c) return;
+      $$('[data-perm]:not([data-perm="admin"])', c.closest('.perms')).forEach((o) => {
+        o.checked = c.checked || o.checked;
+        o.disabled = c.checked || (o.dataset.perm === 'actions' && !can.act());
+      });
+    };
+    body.onclick = async (e) => {
+      const cp = e.target.closest('[data-copy]');
+      if (cp) {
+        try { await navigator.clipboard.writeText(cp.dataset.copy); toast('Senha copiada.'); } catch { toast('Copie a senha manualmente.'); }
+        return;
+      }
+      const b = e.target.closest('[data-u]');
+      if (!b) return;
+      const row = b.closest('.urow');
+      const name = row.dataset.user;
+      const post = async (path, extra) => api(path, { method: 'POST', body: JSON.stringify({ name, ...extra }) });
+      try {
+        if (b.dataset.u === 'edit') { $('.urow-edit', row).hidden = !$('.urow-edit', row).hidden; return; }
+        if (b.dataset.u === 'save') { await post('/api/users/update', readPerms(row)); toast(`Permissões de ${name} salvas. As sessões dele(a) saíram.`); load(); return; }
+        if (b.dataset.u === 'reset') {
+          if (!await confirmDialog({ title: `Nova senha para ${name}?`, ok: 'Gerar senha',
+            body: `<p>O painel gera uma senha provisória e ${esc(name)} sai de todos os aparelhos. No próximo acesso, cria a própria senha.</p>` })) return;
+          const r = await post('/api/users/reset');
+          load(passBox(name, r.password));
+          return;
+        }
+        if (b.dataset.u === 'del') {
+          if (!await confirmDialog({ title: `Remover ${name}?`, ok: 'Remover', danger: true,
+            body: `<p>${esc(name)} deixa de acessar o painel na hora (as sessões abertas caem). Dá para cadastrar de novo depois.</p>` })) return;
+          await post('/api/users/delete');
+          toast(`${name} removido(a).`);
+          load();
+        }
+      } catch (ex) { if (ex.message !== 'login') toast(ex.message); }
+    };
+    body.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    load();
   }
 
   // ------------------------------------------------------------------ aba: banda
@@ -1351,7 +1469,8 @@
         S.chatOn = st.enabled;
         $('#ai-sub').innerHTML = st.enabled
           ? esc(`DeepSeek (${st.model}) com acesso só de leitura ao estado atual, ao histórico, à banda, aos logs, aos processos e aos eventos.`)
-          : `A IA está desligada. <a href="#" data-act="settings" data-v="ia">Ponha a chave da DeepSeek em Configurações → IA</a>.`;
+          : can.admin() ? `A IA está desligada. <a href="#" data-act="settings" data-v="ia">Ponha a chave da DeepSeek em Configurações → IA</a>.`
+            : 'A IA está desligada. Um administrador pode ligar em Configurações → IA.';
         aiView.render();
       }).catch(() => {});
       const ta = $('#chat-in');
@@ -1832,6 +1951,7 @@
 
   // ------------------------------------------------------------------ início
   async function start() {
+    try { S.me = await api('/api/me'); } catch { return; }
     renderShell();
     route();
     await poll();
