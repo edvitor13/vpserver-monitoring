@@ -68,7 +68,7 @@ func TestLoginRateLimit(t *testing.T) {
 }
 
 func TestPrivateRoutesNeedLoginAndHeaders(t *testing.T) {
-	h := New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil).Handler()
+	h := New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil, nil).Handler()
 	for _, p := range []string{"/api/overview", "/api/system", "/api/logs?c=*", "/api/traffic", "/api/history/host"} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest("GET", p, nil))
@@ -135,7 +135,7 @@ func TestPasswordHashAndChange(t *testing.T) {
 }
 
 func TestGzip(t *testing.T) {
-	h := New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil).Handler()
+	h := New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil, nil).Handler()
 	req := httptest.NewRequest("GET", "/app.js", nil)
 	req.Header.Set("Accept-Encoding", "gzip, br")
 	rec := httptest.NewRecorder()
@@ -165,7 +165,7 @@ func TestDefaultLoginForcesChange(t *testing.T) {
 	if u, ok := a.Login("admin", "admin"); !ok || !u.MustChange || !u.Admin {
 		t.Fatal("sem senha configurada, deveria valer admin/admin (administrador) com troca obrigatória")
 	}
-	h := New(nil, a, true, ai.Config{}, "", nil).Handler()
+	h := New(nil, a, true, ai.Config{}, "", nil, nil).Handler()
 	req := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"user":"admin","password":"admin"}`))
 	req.Header.Set("X-Requested-With", "vpmon")
 	rec := httptest.NewRecorder()
@@ -228,7 +228,7 @@ func TestAISettings(t *testing.T) {
 	env := ai.Config{Host: ds.URL, Endpoint: "/v1/chat/completions", Model: "deepseek-chat"}
 	path := filepath.Join(t.TempDir(), "settings.json")
 	auth := NewAuth("u", "senha-muito-boa", "s", true, "", false)
-	h := New(nil, auth, true, env, path, nil).Handler()
+	h := New(nil, auth, true, env, path, nil, nil).Handler()
 	ck := sessionCookie(auth, "u")
 	post := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "/api/settings/ai", strings.NewReader(body))
@@ -266,7 +266,7 @@ func TestAISettings(t *testing.T) {
 
 // A versão vai no index.html (meta e ?v= nos arquivos) e em toda resposta.
 func TestVersionStamp(t *testing.T) {
-	h := New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil).Handler()
+	h := New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil, nil).Handler()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	body := rec.Body.String()
@@ -293,7 +293,7 @@ func TestVersionStamp(t *testing.T) {
 // O que o navegador precisa para oferecer "instalar app": manifesto com os
 // ícones PNG e o service worker (sem cache) servido como JavaScript.
 func TestInstallableAssets(t *testing.T) {
-	h := New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil).Handler()
+	h := New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil, nil).Handler()
 	get := func(p string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest("GET", p, nil))

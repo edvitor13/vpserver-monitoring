@@ -192,7 +192,7 @@ func TestRoutePermissions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := New(nil, a, true, ai.Config{}, "", nil).Handler()
+	h := New(nil, a, true, ai.Config{}, "", nil, nil).Handler()
 	call := func(user, method, path, body string) int {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req.Header.Set("X-Requested-With", "vpmon")

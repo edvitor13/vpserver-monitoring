@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/edvitor13/vpserver-monitoring/internal/ai"
+	"github.com/edvitor13/vpserver-monitoring/internal/fleet"
 	"github.com/edvitor13/vpserver-monitoring/internal/monitor"
 	"github.com/edvitor13/vpserver-monitoring/internal/notify"
 )
@@ -36,6 +37,7 @@ type Server struct {
 	chatLimit chatLimiter
 	nt        *notify.Service // notificações pelo WhatsApp (nil = sem)
 	version   string          // versão do painel: vai no index.html e no X-VPMon-Version
+	fl        *fleet.Fleet    // vários servidores: central e/ou conectado a um central (nil = sem)
 	sendLimit chatLimiter     // "enviar agora" da aba Notificações
 	pauseLim  chatLimiter     // pausar/retomar app
 	usersLim  chatLimiter     // criar/editar/remover usuários
@@ -50,10 +52,10 @@ type asset struct {
 // New monta o servidor. envAI vem das variáveis DEEPSEEK_*; settingsPath é o
 // <data>/settings.json onde fica o que for configurado pela tela; nt são as
 // notificações (pode ser nil).
-func New(mon *monitor.Monitor, auth *Auth, trustCF bool, envAI ai.Config, settingsPath string, nt *notify.Service) *Server {
+func New(mon *monitor.Monitor, auth *Auth, trustCF bool, envAI ai.Config, settingsPath string, nt *notify.Service, fl *fleet.Fleet) *Server {
 	mime.AddExtensionType(".webmanifest", "application/manifest+json")
 	s := &Server{mon: mon, auth: auth, trustCF: trustCF, assets: map[string]asset{}, ai: newAIState(envAI, settingsPath), nt: nt,
-		version: "dev"}
+		version: "dev", fl: fl}
 	if mon != nil && mon.Version() != "" {
 		s.version = safeVersion.ReplaceAllString(mon.Version(), "")
 	}
@@ -84,6 +86,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /", s.static)
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/login/2fa", s.login2FA)
+	// outros painéis conectados a este (token do central, sem cookie)
+	mux.HandleFunc("POST /api/fleet/report", s.fleetReport)
+	mux.HandleFunc("POST /api/fleet/notify", s.fleetNotify)
 	mux.HandleFunc("POST /api/logout", s.logout)
 	mux.HandleFunc("GET /api/me", s.private(s.me))
 	mux.HandleFunc("POST /api/password", s.private(s.changePassword))
@@ -107,6 +112,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/notify/logout", admin(s.notifyLogout))
 	mux.HandleFunc("GET /api/notify/groups", admin(s.notifyGroups))
 	mux.HandleFunc("POST /api/notify/send", admin(s.notifySend))
+	mux.HandleFunc("GET /api/fleet", admin(s.fleetGet))
+	mux.HandleFunc("POST /api/fleet/tokens", admin(s.fleetTokenCreate))
+	mux.HandleFunc("POST /api/fleet/tokens/revoke", admin(s.fleetTokenRevoke))
+	mux.HandleFunc("POST /api/fleet/connect", admin(s.fleetConnect))
+	mux.HandleFunc("POST /api/fleet/disconnect", admin(s.fleetDisconnect))
+	mux.HandleFunc("POST /api/fleet/whatsapp", admin(s.fleetUseWhatsApp))
+	mux.HandleFunc("GET /api/fleet/servers", s.private(s.fleetServers))
 	// ações nas aplicações e gestão de usuários: por permissão
 	mux.HandleFunc("POST /api/apps/pause", s.private(need(User.CanAct, msgNoActions, s.pauseApp)))
 	manage := func(h http.HandlerFunc) http.HandlerFunc { return s.private(need(User.CanManage, msgNoManage, h)) }
