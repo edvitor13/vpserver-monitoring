@@ -277,6 +277,9 @@ func (c *Client) Report(ctx context.Context) {
 	if c.cfg.URL != cfg.URL { // desconectou no meio
 		return
 	}
+	if err != nil && strings.Contains(err.Error(), "cedo demais") {
+		return // o central já tem um resumo recente (ex.: o da conexão): não é erro
+	}
 	if err != nil && c.st.OK {
 		slog.Warn("painel central: resumo não foi", "central", cfg.URL, "err", err)
 	}
