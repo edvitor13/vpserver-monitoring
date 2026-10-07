@@ -746,7 +746,7 @@
     m.innerHTML = `<div class="srv-menu-h">Servidores</div>
       ${item('', localName(), S.fleet && S.fleet.self, null, !S.remote)}
       ${others().map((t) => item(t.id, t.name, t.report, t, S.remote && S.remote.id === t.id)).join('')}
-      <a class="srv-menu-foot" href="#/servers">Gerenciar conexões →</a>`;
+      <a class="srv-menu-foot" href="#/servers" data-act="close">Gerenciar conexões →</a>`;
     document.body.append(scrim, m);
     const w = Math.min(340, window.innerWidth - 24);
     m.style.top = `${Math.round(rect.bottom + 6)}px`;
@@ -1122,6 +1122,8 @@
   // ------------------------------------------------------------------ gaveta de detalhe (contêiner, serviço ou app)
   function closeDrawer() {
     stopWA();
+    // o seletor de servidores sai sempre (a camada transparente dele cobre a tela toda)
+    $$('.scrim-clear, .srv-menu').forEach((e) => e.remove());
     if (!S.drawer) return;
     S.drawer.destroy();
     S.drawer = null;
@@ -2836,7 +2838,7 @@
       if (a === 'logpick') { logsView.pick(v); return; }
       if (a === 'psort') { S.procSort = v; systemView.reload && systemView.reload(); return; }
       if (a === 'more') { openMore(); return; }
-      if (a === 'servers-menu') { openServersMenu(act); return; }
+      if (a === 'servers-menu') { if ($('.srv-menu')) closeDrawer(); else openServersMenu(act); return; }
       if (a === 'pick-server') { pickServer(v); return; }
       if (a === 'update') { location.reload(); return; }
       if (a === 'install') { closeDrawer(); closeInstallBar(); installApp(); return; }
