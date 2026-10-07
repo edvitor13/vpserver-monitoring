@@ -66,12 +66,16 @@ type TokenView struct {
 	LastSeen  int64   `json:"lastSeen"`
 	LastIP    string  `json:"lastIp,omitempty"`
 	Online    bool    `json:"online"`
+	Viewable  bool    `json:"viewable"` // compartilhou e está escutando: dá para ver aqui
+	Logs      bool    `json:"logs"`     // compartilhou os logs
+	Control   bool    `json:"control"`  // liberou o controle total (ações)
 	Report    *Report `json:"report,omitempty"`
 }
 
 type Central struct {
-	path string
-	now  func() time.Time
+	path  string
+	now   func() time.Time
+	views *views
 
 	mu     sync.Mutex
 	tokens []*Token
@@ -81,6 +85,7 @@ type Central struct {
 
 func NewCentral(dataDir string) *Central {
 	c := &Central{now: time.Now}
+	c.views = newViews(func() time.Time { return c.now() })
 	if dataDir != "" {
 		c.path = filepath.Join(dataDir, "fleet-central.json")
 		if b, err := os.ReadFile(c.path); err == nil {
@@ -101,10 +106,21 @@ func randomID(n int) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func (t *Token) view(now time.Time) TokenView {
-	return TokenView{ID: t.ID, Name: t.Name, WhatsApp: t.WhatsApp, Created: t.Created, CreatedBy: t.CreatedBy,
+func (t *Token) view(now time.Time, listening bool) TokenView {
+	v := TokenView{ID: t.ID, Name: t.Name, WhatsApp: t.WhatsApp, Created: t.Created, CreatedBy: t.CreatedBy,
 		LastSeen: t.LastSeen, LastIP: t.LastIP, Report: t.Report,
 		Online: t.LastSeen > 0 && now.Sub(time.Unix(t.LastSeen, 0)) < offlineAfter}
+	if t.Report != nil && v.Online {
+		sh := t.Report.share()
+		v.Viewable, v.Logs, v.Control = sh.View && listening, sh.View && (sh.Logs || sh.Control), sh.View && sh.Control
+	}
+	return v
+}
+
+func (c *Central) listening(id string) bool {
+	c.views.mu.Lock()
+	defer c.views.mu.Unlock()
+	return c.views.listening(id)
 }
 
 // Create gera um token novo (o texto só existe nesta resposta).
@@ -123,7 +139,7 @@ func (c *Central) Create(name, by string, whatsapp bool) (TokenView, string, err
 	c.tokens = append(c.tokens, t)
 	c.dirty = true
 	err := c.saveLocked(true)
-	return t.view(c.now()), plain, err
+	return t.view(c.now(), false), plain, err
 }
 
 // Revoke apaga um token: o servidor dele para de conseguir falar com o central.
@@ -134,6 +150,7 @@ func (c *Central) Revoke(id string) error {
 		if t.ID == id {
 			c.tokens = append(c.tokens[:i], c.tokens[i+1:]...)
 			c.dirty = true
+			c.views.drop(id)
 			return c.saveLocked(true)
 		}
 	}
@@ -158,7 +175,7 @@ func (c *Central) Auth(header string) (TokenView, bool) {
 	if found == nil {
 		return TokenView{}, false
 	}
-	return found.view(c.now()), true
+	return found.view(c.now(), c.listening(found.ID)), true
 }
 
 // Accept guarda o resumo que chegou de um servidor conectado.
@@ -192,6 +209,7 @@ func (c *Central) Bye(id string) error {
 	}
 	t.LastSeen, t.Report = 0, nil
 	c.dirty = true
+	c.views.drop(id)
 	return c.saveLocked(true)
 }
 
@@ -237,7 +255,7 @@ func (c *Central) List() []TokenView {
 	now := c.now()
 	out := make([]TokenView, 0, len(c.tokens))
 	for _, t := range c.tokens {
-		out = append(out, t.view(now))
+		out = append(out, t.view(now, c.listening(t.ID)))
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out

@@ -344,11 +344,35 @@ aba, com o card dele e o convite para conectar outros.
 **Como funciona:** quem chama é sempre o servidor conectado: a cada minuto ele manda ao
 central um resumo (CPU, memória, disco, apps, contagem e títulos dos alertas, banda, versão
 e o endereço do painel dele). Por isso ele **não precisa de endereço público** (serve até
-o endereço provisório da Cloudflare), e o central **não consegue mexer em nada** nele:
-não lê logs, não pausa apps, não entra. Servidor que passa de 3 minutos sem mandar vira
+o endereço provisório da Cloudflare), e o central **nunca abre conexão com ele**: sem o
+compartilhamento abaixo, não vê nada além do resumo nem mexe em nada. Servidor que passa de 3 minutos sem mandar vira
 **alerta urgente no central** (aba Infos e WhatsApp): é o aviso de que ele caiu de vez,
 justamente quando ele mesmo não consegue avisar. **Desconectar** pela tela avisa o central
 (sem alerta); **Revogar** no central corta o servidor na hora.
+
+**Ver e controlar daqui (um app só):** no servidor conectado, em Servidores → *O que o
+painel central pode ver e fazer aqui*, o dono escolhe (tudo desligado por padrão, cada um
+com confirmação e valendo na hora):
+
+| Opção | O central passa a |
+|---|---|
+| **Deixar o central ver este servidor** | ver, na própria tela, a visão geral, Infos, apps, banda, sistema, limites e limpeza dele (só leitura) |
+| **Incluir os logs** | ler os logs das apps dele (log pode ter dado sensível) |
+| **Controle total** | também **pausar/retomar apps e limpar o disco** dele (inclui os logs) |
+
+No central, o **rótulo do servidor no cabeçalho** (em destaque quando é outro), os
+**servidores no topo da Visão geral** e o **Ver aqui** dos cards trocam de servidor: o painel
+inteiro passa a mostrar o outro (só a aba Servidores continua sendo a do central), com uma
+faixa dizendo qual é e "Voltar". Com o controle total, as ações respeitam **as permissões de
+quem está logado no central** (Ações nas apps, Limpar o disco), as confirmações dizem em qual
+servidor e, do lado de lá, ficam registradas como "fulano (pelo painel central)". **Nunca à
+distância:** usuários, senhas/2FA, chave da IA, WhatsApp e a própria conexão (essas abas
+somem enquanto você vê outro servidor).
+
+Como funciona sem o central abrir conexão: com o compartilhamento ligado, o servidor
+conectado deixa um pedido aberto no central (até 25 s, renovado em seguida). O que a tela
+do central pede entra numa fila e desce por esse pedido; ele executa no próprio painel
+(lista fechada de caminhos, conferida nos dois lados) e devolve a resposta.
 
 **WhatsApp compartilhado:** as conexões de WhatsApp são limitadas, então um número só
 pode atender todos os servidores. Num servidor conectado com token liberado, ligue
@@ -363,7 +387,9 @@ mensagens saem pelo WhatsApp do central, **só para os destinos do central**, co
 (600). Um token vazado só permite mandar resumos falsos daquele servidor e, se liberado,
 até 30 avisos por hora **para os destinos do central** (nunca para números escolhidos por
 quem tem o token), sempre com o nome do servidor no fim. O central limita o tamanho de
-tudo que recebe e só aceita links `http(s)` no "Abrir painel".
+tudo que recebe e só aceita links `http(s)` no "Abrir painel". O que o central vê e faz no
+outro servidor depende só do que **o dono do outro servidor** liberou, e um token vazado não
+dá acesso à tela de ninguém: os pedidos de leitura e ação vêm de quem está logado no central.
 
 ---
 
@@ -818,8 +844,10 @@ requisição; requisição sem resposta cai em 100 s.
   A tela nunca vê a chave. Nos logs, senha em URL (`postgresql://user:senha@…`) aparece
   mascarada.
 - **Vários servidores:** tokens por servidor, guardados só como hash no central,
-  revogáveis, e o servidor conectado só **manda** dados (o central não chama nada nele).
-  Ver [Vários servidores](#vários-servidores).
+  revogáveis. O central nunca abre conexão com o servidor conectado; ver a tela dele, os
+  logs e fazer ações (controle total) só com o que o dono daquele servidor liberar, numa
+  lista fechada (nunca usuários, senhas, IA, WhatsApp ou a conexão), com as permissões de
+  quem está no central. Ver [Vários servidores](#vários-servidores).
 - **Sem porta publicada** no servidor; a rede do proxy é `internal` (sem saída).
 - **Logs mostram o que as aplicações escrevem.** Se uma app grava segredo no
   log (ex.: token na URL), ele aparece no painel. Por isso o painel exige login.
@@ -998,8 +1026,10 @@ validada para daltonismo nos dois temas. Status sempre com ícone + texto.
 `"confirm": true`); `/api/settings*` e `/api/notify*` (administradores); `GET /api/fleet/servers`
 (cards da aba Servidores), `GET /api/fleet`, `POST /api/fleet/tokens|tokens/revoke|connect|disconnect|whatsapp`
 (administradores). Entre painéis, sem cookie e com `Authorization: Bearer vps_…`:
-`POST /api/fleet/report` (resumo por minuto), `/api/fleet/notify` (aviso pelo WhatsApp do central) e
-`/api/fleet/bye` (desconexão).
+`POST /api/fleet/report` (resumo por minuto), `/api/fleet/notify` (aviso pelo WhatsApp do central),
+`/api/fleet/bye` (desconexão), `/api/fleet/poll` (pedido aberto, até 25 s) e `/api/fleet/reply`
+(resposta). Na tela do central: `GET/POST /api/fleet/view/<id>/<caminho>` (lê ou, com controle
+total, age no servidor conectado); no conectado: `POST /api/fleet/share` (o que liberar).
 Períodos: `1h`, `6h`, `24h`, `7d`, `30d`, `1y`.
 Erros: `{"error": {"code": "...", "message": "..."}}`.
 

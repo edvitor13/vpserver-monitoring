@@ -187,9 +187,12 @@ func main() {
 	}
 
 	auth := web.NewAuth(user, pass, secret, env("VPMON_COOKIE_SECURE", "true") == "true", dataDir, forceChange)
+	ws := web.New(mon, auth, env("VPMON_TRUST_CF", "true") == "true", aiCfg, filepath.Join(dataDir, "settings.json"), nt, fl).WithCleanup(cl).WithBuild(commit, built)
+	fl.Client.SetLocal(ws.LocalView) // o central pode ler este painel (se compartilhado)
+	go fl.Client.RunViews(ctx)
 	srv := &http.Server{
 		Addr:              listen,
-		Handler:           web.New(mon, auth, env("VPMON_TRUST_CF", "true") == "true", aiCfg, filepath.Join(dataDir, "settings.json"), nt, fl).WithCleanup(cl).WithBuild(commit, built).Handler(),
+		Handler:           ws.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,

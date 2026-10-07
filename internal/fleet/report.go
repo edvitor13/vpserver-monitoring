@@ -35,7 +35,18 @@ type Report struct {
 	AppsUp      int       `json:"appsUp"`
 	AppsTotal   int       `json:"appsTotal"`
 	Apps        []AppLine `json:"apps,omitempty"`
-	WhatsApp    string    `json:"whatsapp"` // own | central | off
+	WhatsApp    string    `json:"whatsapp"`     // own | central | off
+	ShareView   bool      `json:"shareView"`    // deixa o central ver este servidor (só leitura)
+	ShareLogs   bool      `json:"shareLogs"`    // ... inclusive os logs
+	ShareCtl    bool      `json:"shareControl"` // ... e fazer as ações (controle total)
+}
+
+func (r *Report) share() Share {
+	return Share{View: r.ShareView, Logs: r.ShareLogs, Control: r.ShareCtl}
+}
+
+func (r *Report) setShare(sh Share) {
+	r.ShareView, r.ShareLogs, r.ShareCtl = sh.View, sh.View && sh.Logs, sh.View && sh.Control
 }
 
 type AppLine struct {
