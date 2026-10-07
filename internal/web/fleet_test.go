@@ -140,3 +140,34 @@ func TestFleetCentralAndConnectedServer(t *testing.T) {
 		t.Fatalf("depois de revogar: %+v", st)
 	}
 }
+
+func TestFleetTokenUpdateIsAdminOnly(t *testing.T) {
+	a := NewAuth("chefe", "senha-muito-boa", "s", true, t.TempDir(), false)
+	boss, _ := a.Get("chefe")
+	_, pass, _ := a.CreateUser(boss, "gerente", Perms{Manage: true, Actions: true})
+	a.ChangePassword("gerente", pass, "senha-propria-1", "")
+	dir := t.TempDir()
+	fl := &fleet.Fleet{Central: fleet.NewCentral(dir), Client: fleet.NewClient(dir, "dev", func() fleet.Report { return fleet.Report{} })}
+	v, _, _ := fl.Central.Create("loja", "chefe", false)
+	h := New(nil, a, true, ai.Config{}, "", nil, fl).Handler()
+	call := func(user, body string) (int, string) {
+		req := httptest.NewRequest("POST", "/api/fleet/tokens/update", strings.NewReader(body))
+		req.Header.Set("X-Requested-With", "vpmon")
+		req.AddCookie(sessionCookie(a, user))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	if code, _ := call("gerente", `{"id":"`+v.ID+`","whatsapp":true,"relayLimit":60}`); code != http.StatusForbidden {
+		t.Fatalf("só administrador ajusta: %d", code)
+	}
+	if code, body := call("chefe", `{"id":"`+v.ID+`","whatsapp":true,"relayLimit":999}`); code != http.StatusBadRequest || !strings.Contains(body, "500") {
+		t.Fatalf("limite fora da faixa: %d %s", code, body)
+	}
+	if code, body := call("chefe", `{"id":"`+v.ID+`","whatsapp":true,"relayLimit":60}`); code != 200 || !strings.Contains(body, `"relayLimit":60`) {
+		t.Fatalf("ajustar: %d %s", code, body)
+	}
+	if got := fl.Central.List()[0]; !got.WhatsApp || got.Limit != 60 {
+		t.Fatalf("ficou gravado: %+v", got)
+	}
+}

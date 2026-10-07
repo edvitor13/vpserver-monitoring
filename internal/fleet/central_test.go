@@ -115,3 +115,49 @@ func TestRelayPermissionAndRate(t *testing.T) {
 		t.Fatalf("depois de uma hora libera de novo: %v", err)
 	}
 }
+
+func TestRelayLimitPerToken(t *testing.T) {
+	c, ck, _ := newCentral(t)
+	if _, _, err := c.Create("grande", "chefe", true, 900); !errors.Is(err, ErrBadLimit) {
+		t.Fatalf("limite acima do máximo: %v", err)
+	}
+	v, _, err := c.Create("loja", "chefe", false, 3)
+	if err != nil || v.Limit != 3 || v.WhatsApp {
+		t.Fatalf("criar com limite: %+v %v", v, err)
+	}
+	if err := c.AllowRelay(v.ID); !errors.Is(err, ErrNoRelay) {
+		t.Fatal("sem permissão ainda")
+	}
+	// liga o WhatsApp sem trocar o token
+	if v, err = c.Update(v.ID, true, 3); err != nil || !v.WhatsApp {
+		t.Fatalf("ajustar: %+v %v", v, err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := c.AllowRelay(v.ID); err != nil {
+			t.Fatalf("aviso %d: %v", i, err)
+		}
+	}
+	if err := c.AllowRelay(v.ID); !errors.Is(err, ErrRelayRate) {
+		t.Fatalf("passou do limite do token: %v", err)
+	}
+	if got := c.List()[0]; got.Relayed != 3 || got.Limit != 3 {
+		t.Fatalf("uso na última hora: %+v", got)
+	}
+	// sobe o limite na hora, sem esperar a hora virar
+	if v, _ = c.Update(v.ID, true, 5); v.Limit != 5 || c.AllowRelay(v.ID) != nil {
+		t.Fatal("limite maior vale na hora")
+	}
+	if _, err := c.Update(v.ID, true, -1); !errors.Is(err, ErrBadLimit) {
+		t.Fatal("limite negativo")
+	}
+	if v, _ = c.Update(v.ID, true, 0); v.Limit != relayPerHour {
+		t.Fatalf("0 volta ao padrão: %d", v.Limit)
+	}
+	if _, err := c.Update("nao-existe", true, 5); !errors.Is(err, ErrNoToken) {
+		t.Fatal("token desconhecido")
+	}
+	ck.add(61 * time.Minute)
+	if got := c.List()[0]; got.Relayed != 0 {
+		t.Fatalf("depois de uma hora, uso zera: %+v", got)
+	}
+}

@@ -118,6 +118,9 @@ func (s *Service) SaveConfig(c Config) (Config, error) {
 			return Config{}, fmt.Errorf("horário inválido: %q (use HH:MM)", v)
 		}
 	}
+	if c.MaxPerHour != 0 && (c.MaxPerHour < minPerHour || c.MaxPerHour > topPerHour) {
+		return Config{}, fmt.Errorf("o limite vai de %d a %d mensagens por hora", minPerHour, topPerHour)
+	}
 	c.PanelURL = strings.TrimRight(strings.TrimSpace(c.PanelURL), "/")
 	if c.PanelURL != "" && (len(c.PanelURL) > 200 || strings.ContainsAny(c.PanelURL, " \n\t\"'<>") ||
 		!(strings.HasPrefix(c.PanelURL, "https://") || strings.HasPrefix(c.PanelURL, "http://"))) {

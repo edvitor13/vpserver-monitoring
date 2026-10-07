@@ -27,7 +27,8 @@ const (
 	tokenPrefix   = "vps_"
 	offlineAfter  = 3 * time.Minute // sem resumo há mais que isso: "sem notícias"
 	minReportGap  = 15 * time.Second
-	relayPerHour  = 30 // avisos emprestados por hora, por token
+	relayPerHour  = 30 // avisos emprestados por hora, por token (padrão; ajustável por token)
+	maxRelayLimit = 500
 	maxTokens     = 50
 	saveEvery     = 5 * time.Minute
 	tokenNameSize = 40
@@ -39,14 +40,16 @@ var (
 	ErrTooMany   = fmt.Errorf("no máximo %d servidores conectados", maxTokens)
 	ErrTooSoon   = errors.New("resumo cedo demais")
 	ErrNoRelay   = errors.New("este token não pode usar o WhatsApp do painel central")
-	ErrRelayRate = fmt.Errorf("passou de %d avisos por hora por este token", relayPerHour)
+	ErrRelayRate = errors.New("passou do limite de avisos por hora deste servidor")
+	ErrBadLimit  = fmt.Errorf("o limite vai de 1 a %d mensagens por hora", maxRelayLimit)
 )
 
 type Token struct {
 	ID        string  `json:"id"` // curto, aparece na tela
 	Name      string  `json:"name"`
 	Hash      string  `json:"hash"`
-	WhatsApp  bool    `json:"whatsapp"` // pode mandar avisos pelo WhatsApp do central
+	WhatsApp  bool    `json:"whatsapp"`             // pode mandar avisos pelo WhatsApp do central
+	Limit     int     `json:"relayLimit,omitempty"` // avisos por hora (0 = padrão)
 	Created   int64   `json:"created"`
 	CreatedBy string  `json:"createdBy,omitempty"`
 	LastSeen  int64   `json:"lastSeen,omitempty"`
@@ -61,6 +64,8 @@ type TokenView struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
 	WhatsApp  bool    `json:"whatsapp"`
+	Limit     int     `json:"relayLimit"` // avisos por hora pelo WhatsApp daqui
+	Relayed   int     `json:"relayed"`    // avisos na última hora
 	Created   int64   `json:"created"`
 	CreatedBy string  `json:"createdBy,omitempty"`
 	LastSeen  int64   `json:"lastSeen"`
@@ -107,7 +112,7 @@ func randomID(n int) string {
 }
 
 func (t *Token) view(now time.Time, listening bool) TokenView {
-	v := TokenView{ID: t.ID, Name: t.Name, WhatsApp: t.WhatsApp, Created: t.Created, CreatedBy: t.CreatedBy,
+	v := TokenView{ID: t.ID, Name: t.Name, WhatsApp: t.WhatsApp, Limit: t.limit(), Relayed: t.relayedSince(now.Add(-time.Hour)), Created: t.Created, CreatedBy: t.CreatedBy,
 		LastSeen: t.LastSeen, LastIP: t.LastIP, Report: t.Report,
 		Online: t.LastSeen > 0 && now.Sub(time.Unix(t.LastSeen, 0)) < offlineAfter}
 	if t.Report != nil && v.Online {
@@ -117,17 +122,59 @@ func (t *Token) view(now time.Time, listening bool) TokenView {
 	return v
 }
 
+func (t *Token) limit() int {
+	if t.Limit <= 0 {
+		return relayPerHour
+	}
+	return t.Limit
+}
+
+func (t *Token) relayedSince(since time.Time) int {
+	n := 0
+	for _, x := range t.relays {
+		if time.Unix(x, 0).After(since) {
+			n++
+		}
+	}
+	return n
+}
+
+// Update muda, sem trocar o token, se o servidor pode usar o WhatsApp daqui e
+// quantos avisos por hora (limit 0 = padrão).
+func (c *Central) Update(id string, whatsapp bool, limit int) (TokenView, error) {
+	if limit < 0 || limit > maxRelayLimit {
+		return TokenView{}, ErrBadLimit
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.find(id)
+	if t == nil {
+		return TokenView{}, ErrNoToken
+	}
+	t.WhatsApp, t.Limit = whatsapp, limit
+	c.dirty = true
+	err := c.saveLocked(true)
+	return t.view(c.now(), c.views.listeningLocked(t.ID)), err
+}
+
 func (c *Central) listening(id string) bool {
 	c.views.mu.Lock()
 	defer c.views.mu.Unlock()
 	return c.views.listening(id)
 }
 
-// Create gera um token novo (o texto só existe nesta resposta).
-func (c *Central) Create(name, by string, whatsapp bool) (TokenView, string, error) {
+// Create gera um token novo (o texto só existe nesta resposta). limit 0 = padrão.
+func (c *Central) Create(name, by string, whatsapp bool, limit ...int) (TokenView, string, error) {
 	name = strings.TrimSpace(name)
 	if n := len([]rune(name)); n == 0 || n > tokenNameSize {
 		return TokenView{}, "", ErrBadName
+	}
+	lim := 0
+	if len(limit) > 0 {
+		lim = limit[0]
+	}
+	if lim < 0 || lim > maxRelayLimit {
+		return TokenView{}, "", ErrBadLimit
 	}
 	plain := tokenPrefix + randomID(32)
 	c.mu.Lock()
@@ -135,7 +182,7 @@ func (c *Central) Create(name, by string, whatsapp bool) (TokenView, string, err
 	if len(c.tokens) >= maxTokens {
 		return TokenView{}, "", ErrTooMany
 	}
-	t := &Token{ID: randomID(6), Name: name, Hash: hashToken(plain), WhatsApp: whatsapp, Created: c.now().Unix(), CreatedBy: by}
+	t := &Token{ID: randomID(6), Name: name, Hash: hashToken(plain), WhatsApp: whatsapp, Limit: lim, Created: c.now().Unix(), CreatedBy: by}
 	c.tokens = append(c.tokens, t)
 	c.dirty = true
 	err := c.saveLocked(true)
@@ -232,7 +279,7 @@ func (c *Central) AllowRelay(id string) error {
 		}
 	}
 	t.relays = keep
-	if len(t.relays) >= relayPerHour {
+	if len(t.relays) >= t.limit() {
 		return ErrRelayRate
 	}
 	t.relays = append(t.relays, now.Unix())

@@ -119,6 +119,12 @@ func (v *views) queue(token string) chan ViewRequest {
 	return q
 }
 
+func (v *views) listeningLocked(token string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.listening(token)
+}
+
 func (v *views) listening(token string) bool {
 	t, ok := v.polled[token]
 	return ok && v.now().Sub(t) < listenWithin

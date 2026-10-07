@@ -60,6 +60,8 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+/* hidden vale sempre (sem isto, classes com display:flex/grid mostravam o que devia sumir) */
+[hidden] { display: none !important; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -720,3 +722,6 @@ a.btn { text-decoration: none; color: inherit; }
 .fl-share { display: grid; gap: 10px; margin: 14px 0; padding-top: 12px; border-top: 1px solid var(--border); }
 .fl-share h3 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: .92rem; }
 .srv-foot .controls { display: flex; gap: 6px; flex-wrap: wrap; }
+.fl-limit small { display: block; margin-top: 4px; font-size: .76rem; }
+.fl-limit .input, .nt-max { width: 110px; }
+.urow-edit .perm { margin-bottom: 8px; }

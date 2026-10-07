@@ -111,3 +111,36 @@ func TestCentralRelaysOnlyToItsRecipients(t *testing.T) {
 		t.Fatal("notificações desligadas no central: não empresta")
 	}
 }
+
+func TestHourlyLimitIsConfigurable(t *testing.T) {
+	s, _, wa, _ := setup(t, "2026-10-06 14:00")
+	ctx := context.Background()
+	s.Tick(ctx)
+	cfg := s.cfg
+	cfg.MaxPerHour = 2
+	if _, err := s.SaveConfig(cfg); err == nil {
+		t.Fatal("abaixo do mínimo")
+	}
+	cfg.MaxPerHour = 501
+	if _, err := s.SaveConfig(cfg); err == nil {
+		t.Fatal("acima do máximo")
+	}
+	cfg.MaxPerHour = 5
+	if _, err := s.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if err := s.Relay(ctx, "loja", "oi"); err != nil {
+			t.Fatalf("aviso %d: %v", i, err)
+		}
+	}
+	if err := s.Relay(ctx, "loja", "oi"); err == nil || !strings.Contains(err.Error(), "5 mensagens") {
+		t.Fatalf("o limite geral configurado vale para os avisos emprestados: %v", err)
+	}
+	wa.take()
+	cfg.MaxPerHour = 0 // volta ao padrão (30)
+	s.SaveConfig(cfg)
+	if err := s.Relay(ctx, "loja", "oi"); err != nil {
+		t.Fatalf("padrão de novo: %v", err)
+	}
+}
