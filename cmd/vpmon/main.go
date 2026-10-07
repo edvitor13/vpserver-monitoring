@@ -34,7 +34,14 @@ import (
 	"github.com/edvitor13/vpserver-monitoring/internal/web"
 )
 
-var version = "dev" // trocado no build: -ldflags "-X main.version=<commit>"
+// Trocados no build (-ldflags "-X main.version=... -X main.commit=... -X main.built=..."):
+// a versão (1.4.0 no CI; <última>-dev.<commit> no deploy manual), o commit e a
+// data da versão (RFC 3339).
+var (
+	version = "dev"
+	commit  = ""
+	built   = ""
+)
 
 func env(k, def string) string {
 	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
@@ -65,7 +72,11 @@ func main() {
 			}
 			return
 		case "version":
-			fmt.Println(version)
+			if extra := strings.Trim(commit+", "+built, ", "); extra != "" {
+				fmt.Printf("%s (%s)\n", version, extra)
+			} else {
+				fmt.Println(version)
+			}
 			return
 		case "reset-password":
 			if len(os.Args) < 3 {
@@ -178,7 +189,7 @@ func main() {
 	auth := web.NewAuth(user, pass, secret, env("VPMON_COOKIE_SECURE", "true") == "true", dataDir, forceChange)
 	srv := &http.Server{
 		Addr:              listen,
-		Handler:           web.New(mon, auth, env("VPMON_TRUST_CF", "true") == "true", aiCfg, filepath.Join(dataDir, "settings.json"), nt, fl).WithCleanup(cl).Handler(),
+		Handler:           web.New(mon, auth, env("VPMON_TRUST_CF", "true") == "true", aiCfg, filepath.Join(dataDir, "settings.json"), nt, fl).WithCleanup(cl).WithBuild(commit, built).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
