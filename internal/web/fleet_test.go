@@ -120,13 +120,23 @@ func TestFleetCentralAndConnectedServer(t *testing.T) {
 		t.Fatalf("o WhatsApp do central mandou o aviso do blog: %v", wa.sent)
 	}
 
+	// desconectar de propósito: o central não acusa silêncio
+	if err := remote.Disconnect(ctx); err != nil || remote.Status().Connected || remote.Active() {
+		t.Fatal("desconectar esquece o central")
+	}
+	for _, tv := range fl.Central.List() {
+		if tv.ID == v2.ID && (tv.LastSeen != 0 || tv.Report != nil) {
+			t.Fatalf("o central soube da desconexão: %+v", tv)
+		}
+	}
+	if _, err := remote.Connect(ctx, central.URL, plain2); err != nil {
+		t.Fatal(err)
+	}
+
 	// token revogado: o servidor conectado vê o erro
 	fl.Central.Revoke(v2.ID)
 	remote.Report(ctx)
 	if st := remote.Status(); st.OK || !strings.Contains(st.Error, "token") {
 		t.Fatalf("depois de revogar: %+v", st)
-	}
-	if err := remote.Disconnect(); err != nil || remote.Status().Connected || remote.Active() {
-		t.Fatal("desconectar esquece o central")
 	}
 }

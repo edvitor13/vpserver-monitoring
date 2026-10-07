@@ -181,6 +181,20 @@ func (c *Central) Accept(id string, r Report, ip string) error {
 	return nil
 }
 
+// Bye: o servidor se desconectou de propósito. O card volta a "aguardando
+// conexão" e não vira alerta de silêncio (o token continua valendo).
+func (c *Central) Bye(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.find(id)
+	if t == nil {
+		return ErrNoToken
+	}
+	t.LastSeen, t.Report = 0, nil
+	c.dirty = true
+	return c.saveLocked(true)
+}
+
 // AllowRelay confere se o token pode mandar um aviso pelo WhatsApp agora.
 func (c *Central) AllowRelay(id string) error {
 	c.mu.Lock()

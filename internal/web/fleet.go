@@ -80,6 +80,19 @@ func (s *Server) fleetReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, reply)
 }
 
+// fleetBye: o servidor conectado se desconectou de propósito.
+func (s *Server) fleetBye(w http.ResponseWriter, r *http.Request) {
+	tok, ok := s.fleetToken(w, r)
+	if !ok {
+		return
+	}
+	if err := s.fl.Central.Bye(tok.ID); err != nil {
+		apiError(w, http.StatusUnauthorized, "bad_token", "Token inválido ou revogado.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 // fleetNotify manda, pelo WhatsApp daqui, um aviso de um servidor conectado.
 func (s *Server) fleetNotify(w http.ResponseWriter, r *http.Request) {
 	tok, ok := s.fleetToken(w, r)
@@ -227,7 +240,7 @@ func (s *Server) fleetDisconnect(w http.ResponseWriter, r *http.Request) {
 	if !s.fleetBody(w, r, &b) {
 		return
 	}
-	if err := s.fl.Client.Disconnect(); err != nil {
+	if err := s.fl.Client.Disconnect(r.Context()); err != nil {
 		apiError(w, http.StatusInternalServerError, "store_failed", "Não consegui gravar a mudança.")
 		return
 	}

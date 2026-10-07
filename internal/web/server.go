@@ -89,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	// outros painéis conectados a este (token do central, sem cookie)
 	mux.HandleFunc("POST /api/fleet/report", s.fleetReport)
 	mux.HandleFunc("POST /api/fleet/notify", s.fleetNotify)
+	mux.HandleFunc("POST /api/fleet/bye", s.fleetBye)
 	mux.HandleFunc("POST /api/logout", s.logout)
 	mux.HandleFunc("GET /api/me", s.private(s.me))
 	mux.HandleFunc("POST /api/password", s.private(s.changePassword))

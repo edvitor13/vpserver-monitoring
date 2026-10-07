@@ -181,8 +181,17 @@ func (c *Client) Connect(ctx context.Context, rawURL, token string) (ClientStatu
 	return c.st, nil
 }
 
-// Disconnect esquece o central (o token continua valendo lá até ser revogado).
-func (c *Client) Disconnect() error {
+// Disconnect avisa o central (para ele não acusar silêncio) e esquece a
+// conexão. O token continua valendo lá até ser revogado.
+func (c *Client) Disconnect(ctx context.Context) error {
+	c.mu.Lock()
+	cfg := c.cfg
+	c.mu.Unlock()
+	if cfg.URL != "" {
+		bc, cancel := context.WithTimeout(ctx, 8*time.Second)
+		c.post(bc, cfg.URL, cfg.Token, "/api/fleet/bye", map[string]any{}, nil) // sem resposta: o central acusa silêncio
+		cancel()
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cfg, c.st = clientConfig{}, ClientStatus{}

@@ -86,6 +86,13 @@ func TestReportsOnlineAndOfflineAlert(t *testing.T) {
 	if err := c.Accept(v.ID, r, ""); err != nil || len(c.Alerts()) != 0 {
 		t.Fatal("voltou a mandar: some o alerta")
 	}
+	if err := c.Bye(v.ID); err != nil {
+		t.Fatal(err)
+	}
+	ck.add(10 * time.Minute)
+	if got := c.List()[0]; len(c.Alerts()) != 0 || got.Online || got.Report != nil || got.LastSeen != 0 {
+		t.Fatalf("desconectou de propósito: sem alerta e sem card velho (%+v)", got)
+	}
 }
 
 func TestRelayPermissionAndRate(t *testing.T) {

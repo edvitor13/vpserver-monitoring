@@ -34,6 +34,9 @@ func TestClientWithoutCentral(t *testing.T) {
 		t.Fatal("sem central configurado")
 	}
 	c.Report(context.Background()) // não faz nada
+	if err := c.Disconnect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := c.SetUseWhatsApp(true); err == nil {
 		t.Fatal("sem central não liga o WhatsApp emprestado")
 	}
