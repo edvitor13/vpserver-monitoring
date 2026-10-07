@@ -100,6 +100,7 @@
     user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
     install: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
+    broom: '<path d="m13 11 8-8"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.5-1.5"/>',
     layers: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
     link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
     ext: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
@@ -567,6 +568,7 @@
   const TABS = [['overview', 'Visão geral', 'grid', 'Início'], ['servers', 'Servidores', 'layers', 'Servidores'], ['infos', 'Infos', 'info', 'Infos'],
     ['apps', 'Aplicações', 'box', 'Apps'], ['traffic', 'Banda', 'net', 'Banda'], ['logs', 'Logs', 'term', 'Logs'],
     ['system', 'Sistema', 'server', 'Sistema'], ['limits', 'Limites', 'load', 'Limites'],
+    ['cleanup', 'Limpeza', 'broom', 'Limpeza'], ['users', 'Usuários', 'users', 'Usuários'],
     ['ai', 'IA', 'spark', 'IA'], ['notify', 'Notificações', 'bell', 'Avisos']]; // IA e WhatsApp juntas, no fim
   const BNAV = ['overview', 'apps', 'infos', 'ai']; // no celular, o resto fica em "Mais"
   // o que o usuário logado pode (a API recusa do mesmo jeito; aqui só some da tela)
@@ -574,10 +576,11 @@
     admin: () => !!(S.me && S.me.admin),
     act: () => !!(S.me && (S.me.admin || S.me.actions)),
     manage: () => !!(S.me && (S.me.admin || S.me.manage)),
+    clean: () => !!(S.me && (S.me.admin || S.me.clean)),
   };
   const roleText = (u) => (u.admin ? 'Administrador'
-    : [u.actions && 'Ações nas apps', u.manage && 'Gerencia usuários'].filter(Boolean).join(' · ') || 'Só leitura');
-  const visibleTabs = () => TABS.filter(([k]) => k !== 'notify' || can.admin());
+    : [u.actions && 'Ações nas apps', u.manage && 'Gerencia usuários', u.clean && 'Limpa o disco'].filter(Boolean).join(' · ') || 'Só leitura');
+  const visibleTabs = () => TABS.filter(([k]) => (k !== 'notify' || can.admin()) && (k !== 'users' || can.manage()));
   const tabHref = (k) => `#/${k === 'overview' ? '' : k}`;
   const countHTML = (k) => (k === 'infos' ? '<span class="count infos-count" hidden></span>' : '');
   function renderShell() {
@@ -1227,7 +1230,8 @@
       S.me = me;
       if (me.admin) st = await api('/api/settings');
     } catch { return; }
-    const tabs = [['acesso', 'Minha conta', true], ['usuarios', 'Usuários', can.manage()], ['ia', 'IA', can.admin()], ['whatsapp', 'WhatsApp', can.admin()]]
+    if (tab === 'usuarios') { location.hash = '#/users'; return; } // virou a aba Usuários
+    const tabs = [['acesso', 'Minha conta', true], ['ia', 'IA', can.admin()], ['whatsapp', 'WhatsApp', can.admin()]]
       .filter(([, , ok]) => ok);
     if (!tabs.some(([k]) => k === tab)) tab = 'acesso';
     const scrim = document.createElement('div');
@@ -1249,9 +1253,7 @@
       const body = $('#st-body', m);
       stopWA();
       body.onclick = body.onchange = null;
-      if (t === 'usuarios') {
-        usersPanel(body);
-      } else if (t === 'ia') {
+      if (t === 'ia') {
         body.innerHTML = aiFormHTML(st.ai, false);
         bindAI((v) => { st.ai = v; }, null);
       } else if (t === 'whatsapp') {
@@ -1283,7 +1285,7 @@
     show(tab);
   }
 
-  // ------------------------------------------------------------------ usuários (Configurações → Usuários)
+  // ------------------------------------------------------------------ usuários (aba Usuários)
   function permBoxes(u) {
     const me = S.me;
     const box = (k, label, hint, ok) => `<label class="perm${ok ? '' : ' locked'}"><input type="checkbox" class="sw" data-perm="${k}"
@@ -1292,7 +1294,8 @@
     return `<div class="perms">
       ${box('admin', 'Administrador', 'Pode tudo: ações nas apps, usuários, IA e WhatsApp.', me.admin)}
       ${box('actions', 'Pausar e retomar aplicações', 'Os botões Pausar/Retomar da aba Aplicações.', me.admin || me.actions)}
-      ${box('manage', 'Criar e gerenciar usuários', 'Sem mexer em administradores; só concede o que tem.', true)}</div>`;
+      ${box('manage', 'Criar e gerenciar usuários', 'Sem mexer em administradores; só concede o que tem.', true)}
+      ${box('clean', 'Limpar o disco', 'A aba Limpeza: cache de build, imagens sem nome, logs e a limpeza automática.', me.admin || me.clean)}</div>`;
   }
   const readPerms = (root) => Object.fromEntries($$('[data-perm]', root).map((c) => [c.dataset.perm, c.checked]));
   const passBox = (name, pass) => `<div class="passbox" role="status"><div><b>Senha provisória de ${esc(name)}</b></div>
@@ -1307,7 +1310,8 @@
       }
       const me = S.me;
       const editable = (u) => u.name !== me.user && (me.admin || !u.admin);
-      body.innerHTML = `${flash || ''}<div class="ulist">${j.users.map((u) => `<div class="urow" data-user="${esc(u.name)}">
+      body.innerHTML = `${flash || ''}<div class="us-grid"><section class="card"><div class="card-h"><h2>${icon('users')}Quem tem acesso</h2><span class="muted">${j.users.length}</span></div>
+        <div class="ulist">${j.users.map((u) => `<div class="urow" data-user="${esc(u.name)}">
           <div class="urow-h"><div class="urow-n"><span><b>${esc(u.name)}</b>${u.name === me.user ? ' <span class="muted">(você)</span>' : ''}</span>
             <small>${esc(roleText(u))}${u.twoFA ? ' · 2FA ligado' : ''}${u.mustChange ? ' · senha provisória' : ''} · ${u.lastLogin ? `último acesso ${dt(u.lastLogin)}` : 'nunca entrou'}</small></div>
             ${editable(u) ? `<div class="controls"><button class="btn sm" type="button" data-u="edit">Permissões</button>
@@ -1315,14 +1319,14 @@
               ${u.twoFA ? '<button class="btn sm" type="button" data-u="tfoff">Desligar 2FA</button>' : ''}
               <button class="btn sm" type="button" data-u="del" aria-label="Remover ${esc(u.name)}">Remover</button></div>` : ''}</div>
           ${editable(u) ? `<div class="urow-edit" hidden>${permBoxes(u)}<div class="controls"><button class="btn primary sm" type="button" data-u="save">Salvar permissões</button></div></div>` : ''}
-        </div>`).join('')}</div>
-        <form class="stack unew" id="unew" autocomplete="off"><h3>${icon('plus')}Novo usuário</h3>
+        </div>`).join('')}</div></section>
+        <section class="card"><form class="stack" id="unew" autocomplete="off"><h2 class="us-h">${icon('plus')}Novo usuário</h2>
           <div class="field"><label for="un-name">Nome de usuário</label><input class="input" id="un-name" minlength="3" maxlength="32" required placeholder="ex.: maria" autocapitalize="off" spellcheck="false"></div>
           ${permBoxes({})}
           <div class="form-err" id="un-err" role="alert"></div>
           <button class="btn primary" type="submit">Criar usuário</button>
           <p class="muted" style="margin:0;font-size:.8rem">Sem nenhuma permissão marcada, a pessoa só vê (dados, logs e o chat com a IA).
-            O painel gera uma senha provisória; a pessoa cria a dela no primeiro acesso.</p></form>`;
+            O painel gera uma senha provisória; a pessoa cria a dela no primeiro acesso.</p></form></section></div>`;
       $('#unew', body).addEventListener('submit', async (e) => {
         e.preventDefault();
         const name = $('#un-name', body).value.trim();
@@ -1337,7 +1341,7 @@
       if (!c) return;
       $$('[data-perm]:not([data-perm="admin"])', c.closest('.perms')).forEach((o) => {
         o.checked = c.checked || o.checked;
-        o.disabled = c.checked || (o.dataset.perm === 'actions' && !can.act());
+        o.disabled = c.checked || (o.dataset.perm === 'actions' && !can.act()) || (o.dataset.perm === 'clean' && !can.clean());
       });
     };
     body.onclick = async (e) => {
@@ -2373,7 +2377,225 @@
     },
   };
 
-  const VIEWS = { overview, servers: serversView, infos: infosView, ai: aiView, apps: appsView, traffic: trafficView, logs: logsView, system: systemView, limits: limitsView, notify: notifyView };
+  // ------------------------------------------------------------------ aba: limpeza do disco
+  const CL = {
+    build_cache: { name: 'Cache de build do Docker', icon: 'box',
+      desc: 'Sobras dos builds de imagens (camadas intermediárias) que nenhum build está usando.',
+      cons: 'O próximo build de cada app demora mais, porque o Docker refaz o cache. Nada que está rodando muda.' },
+    dangling: { name: 'Imagens sem nome', icon: 'layers',
+      desc: 'Versões antigas que ficaram sem nome (<none>) depois de builds e atualizações. Nenhum contêiner usa: o Docker não apaga imagem em uso, nem de contêiner parado.',
+      cons: 'Não dá mais para voltar a essas versões antigas sem baixar ou buildar de novo. As apps no ar continuam iguais.' },
+    logs: { name: 'Logs dos contêineres', icon: 'logs',
+      desc: 'O que as apps escreveram no log (o que aparece na aba Logs e no docker logs). Escolha de quais apps.',
+      cons: 'O histórico de logs das apps escolhidas some. Elas continuam rodando e o que escreverem daqui para frente continua sendo guardado.' },
+  };
+  const clPct = (d) => (d.fsTotal ? (d.fsUsed / d.fsTotal) * 100 : 0);
+  // logs agrupados por app: [{app, name, size, ids, cts}]
+  function clLogApps(d) {
+    const by = new Map();
+    for (const l of d.logs) {
+      const g = by.get(l.app) || { app: l.app, name: l.appName || l.app, size: 0, ids: [], cts: [] };
+      g.size += l.size;
+      g.ids.push(l.id);
+      g.cts.push(l.name);
+      by.set(l.app, g);
+    }
+    return [...by.values()].sort((a, b) => b.size - a.size);
+  }
+  const cleanupView = {
+    mount(v) {
+      v.innerHTML = `<div class="page"><div class="section-h"><div><h2>${icon('broom')} Limpeza do disco</h2>
+        <p>Libera espaço só com o que não afeta as aplicações. Vale para o servidor todo (o Docker é um só), inclusive apps que não são deste painel.</p></div></div>
+        <div id="cl-body"><div class="loading"><div class="spinner"></div></div></div></div>`;
+      cleanupView.sel = { build: false, dangling: false, apps: new Set() };
+      cleanupView.listen($('#cl-body'));
+      cleanupView.load();
+    },
+    async load() {
+      clearTimeout(cleanupView.t);
+      try {
+        const j = await api('/api/cleanup');
+        const was = S.cl && S.cl.running;
+        S.cl = j.cleanup;
+        S.canClean = j.canClean;
+        if (was && !S.cl.running && S.cl.runs[0]) {
+          const r = S.cl.runs[0];
+          toast(`Limpeza concluída: ${bytes(r.freed)} liberados.`);
+          cleanupView.sel = { build: false, dangling: false, apps: new Set() };
+        }
+        cleanupView.render();
+        if (S.cl.running) cleanupView.t = setTimeout(() => { if (S.tab === 'cleanup') cleanupView.load(); }, 2000);
+      } catch (e) {
+        if (e.message !== 'login' && $('#cl-body')) $('#cl-body').innerHTML = `<div class="card empty">${esc(e.message)}</div>`;
+      }
+    },
+    // o que está marcado: {build, dangling, logs: [ids], size, apps: [nomes]}
+    picked() {
+      const c = S.cl, d = c.disk, sel = cleanupView.sel;
+      const apps = c.logsHelper ? clLogApps(d).filter((g) => sel.apps.has(g.app)) : [];
+      return {
+        build: sel.build && d.buildCache > 0, dangling: sel.dangling && d.danglingCount > 0,
+        logs: apps.flatMap((g) => g.ids), appNames: apps.map((g) => g.name),
+        size: (sel.build ? d.buildCache : 0) + (sel.dangling ? d.danglingSize : 0) + apps.reduce((s, g) => s + g.size, 0),
+      };
+    },
+    render() {
+      const body = $('#cl-body');
+      if (!body || !S.cl) return;
+      if (body.contains(document.activeElement) && document.activeElement.matches('input[type="number"]')) return;
+      const c = S.cl, d = c.disk, sel = cleanupView.sel, can = S.canClean && !c.running;
+      const p = clPct(d);
+      const apps = clLogApps(d);
+      const logsTotal = apps.reduce((s, g) => s + g.size, 0);
+      const freeable = d.buildCache + d.danglingSize + logsTotal;
+      const item = (key, checked, size, extra, disabledWhy) => {
+        const it = CL[key];
+        const off = !can || !!disabledWhy;
+        return `<div class="cl-item${checked && !off ? ' on' : ''}"><label class="cl-head">
+          <input type="checkbox" class="sw" data-cl="${key}" ${checked && !off ? 'checked' : ''} ${off ? 'disabled' : ''}>
+          <span class="cl-t">${icon(it.icon)}<b>${it.name}</b></span><b class="num cl-size">${size}</b></label>
+          <p class="muted cl-d">${esc(it.desc)}</p>
+          <p class="cl-cons">${icon('warn')}<span>${esc(it.cons)}</span></p>
+          ${disabledWhy ? `<p class="muted cl-why">${esc(disabledWhy)}</p>` : ''}${extra || ''}</div>`;
+      };
+      const logsList = apps.length ? `<div class="cl-apps">${apps.map((g) => `<label class="cl-app">
+          <input type="checkbox" data-clapp="${esc(g.app)}" ${sel.apps.has(g.app) ? 'checked' : ''} ${!can || !c.logsHelper ? 'disabled' : ''}>
+          <span class="cl-app-n"><b>${esc(g.name)}</b><small class="muted">${esc(g.cts.join(', '))}</small></span><span class="num">${bytes(g.size)}</span></label>`).join('')}</div>` : '';
+      const pk = cleanupView.picked();
+      const runs = c.runs || [];
+      body.innerHTML = `
+        ${c.running ? `<div class="alert info slim"><div class="ic"><span class="spinner inline"></span></div><div class="alert-body"><div class="alert-t">Limpando… pode levar alguns minutos. A tela atualiza sozinha.</div></div></div>` : ''}
+        ${!S.canClean ? `<div class="alert info slim"><div class="ic">${icon('lock')}</div><div class="alert-body"><div class="alert-t">Você pode ver, mas limpar exige a permissão <b>Limpar o disco</b>. Peça a um administrador.</div></div></div>` : ''}
+        <section class="card cl-hero"><div class="card-h"><h2>${icon('disk')}Disco do servidor</h2>${badge(p >= 90 ? 'crit' : p >= 80 ? 'warn' : 'ok', pct(p))}</div>
+          <div class="hero num">${bytes(d.fsUsed)} <span class="muted" style="font-size:1rem;font-weight:500">de ${bytes(d.fsTotal)}</span></div>
+          <div class="meter thick" style="margin:10px 0 8px"><i class="${level(p, 80, 90)}" style="width:${Math.min(100, p).toFixed(1)}%"></i></div>
+          <div class="muted" style="font-size:.86rem">Dá para liberar com segurança: <b class="ink2">${bytes(freeable)}</b>${d.measured ? ` · Docker medido às ${hms(d.measured * 1000).slice(0, 5)}` : ' · medindo o Docker…'}</div></section>
+        <section class="card"><div class="card-h"><h2>${icon('broom')}O que dá para limpar</h2></div>
+          <div class="cl-items">
+            ${item('build_cache', sel.build, bytes(d.buildCache), '', d.buildCache ? '' : 'Nada para limpar agora.')}
+            ${item('dangling', sel.dangling, `${bytes(d.danglingSize)}${d.danglingCount ? ` · ${d.danglingCount} imagem(ns)` : ''}`, '', d.danglingCount ? '' : 'Nenhuma imagem sem nome agora.')}
+            ${item('logs', sel.apps.size > 0, bytes(logsTotal), logsList,
+              !c.logsHelper ? 'O ajudante que limpa os logs (vpserver-cleaner) não está rodando. Ele sobe junto com o painel a partir desta versão: no servidor, docker compose up -d.'
+                : !d.logsKnown ? 'O tamanho dos logs ainda não foi medido (o vpserver-sizer mede a cada 5 min).' : apps.length ? '' : 'Nenhum log para limpar.')}
+          </div>
+          <div class="cl-go"><span class="muted">${pk.size ? `Selecionado: <b class="ink2">${bytes(pk.size)}</b>` : 'Marque o que quer limpar.'}</span>
+            <button class="btn primary" type="button" data-cla="run" ${can && pk.size ? '' : 'disabled'}>${icon('broom')}Limpar selecionados</button></div>
+        </section>
+        <div class="grid g2">
+          ${cleanupView.autoHTML(c)}
+          <section class="card"><div class="card-h"><h2>${icon('shield')}Nunca é limpo</h2></div>
+            <ul class="cl-never">
+              <li><b>Volumes</b>: os dados das apps (bancos, uploads, sessões).</li>
+              <li><b>Contêineres</b>, nem os parados ou pausados.</li>
+              <li><b>Imagens com nome ou em uso</b>, nem as de contêiner parado.</li>
+              <li><b>Redes</b> do Docker.</li>
+              <li>Arquivos fora do Docker (sistema, /var/log, pastas das apps): ficam com você no servidor.</li>
+            </ul>
+            <p class="muted" style="margin:8px 0 0;font-size:.82rem">Por isso nenhuma app para ou perde dados com a limpeza.</p></section>
+        </div>
+        <section class="card"><div class="card-h"><h2>${icon('clock')}Histórico</h2></div>
+          ${runs.length ? `<div class="nlog">${runs.map((r) => `<details class="nl"><summary><span class="nl-time">${dt(r.t)}</span>
+            ${badge(r.steps.some((s) => s.error) ? 'warn' : 'ok', r.by ? r.by : 'automática')}
+            <span class="nl-title">${bytes(r.freed)} liberados · disco ${pct(r.before)} → ${pct(r.after)}</span></summary>
+            <div class="cl-steps">${r.note ? `<p class="muted">${esc(r.note)}</p>` : ''}${r.steps.map((s) => `<div>${esc(CL[s.item] ? CL[s.item].name : s.item)}${s.names && s.names.length ? ` (${esc(s.names.join(', '))})` : ''}:
+              ${s.error ? `<span class="nl-err">falhou: ${esc(s.error)}</span>` : `<b>${bytes(s.freed)}</b>${s.item === 'dangling' ? ` · ${s.removed} imagem(ns)` : ''}`}</div>`).join('')}</div></details>`).join('')}</div>`
+            : '<div class="empty">Nenhuma limpeza ainda.</div>'}</section>`;
+    },
+    autoHTML(c) {
+      const a = c.auto, can = S.canClean;
+      const dis = can ? '' : 'disabled';
+      return `<section class="card"><div class="card-h"><h2>${icon('refresh')}Limpeza automática</h2>
+          <label class="sw-l"><input class="sw" type="checkbox" id="cl-auto-on" ${a.enabled ? 'checked' : ''} ${dis}><span>${a.enabled ? 'Ligada' : 'Desligada'}</span></label></div>
+        <form class="stack" id="cl-auto" autocomplete="off">
+          <div class="field cl-thr"><label for="cl-thr">Limpar quando o disco passar de</label>
+            <div class="cl-inline"><input class="input" type="number" id="cl-thr" min="50" max="98" value="${a.threshold}" ${dis}><span>%</span></div></div>
+          <div class="cl-checks">
+            <label><input type="checkbox" id="cl-a-build" ${a.buildCache ? 'checked' : ''} ${dis}> Cache de build</label>
+            <label><input type="checkbox" id="cl-a-dang" ${a.dangling ? 'checked' : ''} ${dis}> Imagens sem nome</label>
+            <label><input type="checkbox" id="cl-a-logs" ${a.logs ? 'checked' : ''} ${dis}> Logs maiores que
+              <input class="input cl-mb" type="number" id="cl-a-mb" min="10" value="${a.logsOverMb}" ${dis}> MB (por contêiner)</label>
+          </div>
+          <p class="muted" style="margin:0;font-size:.8rem">No máximo uma vez a cada 6 h. Cada limpeza fica no histórico e avisa pelo WhatsApp
+            (tipo "Limpeza do disco" em Notificações).${c.lastAuto ? ` Última automática: ${dt(c.lastAuto)}.` : ''}</p>
+          <div class="form-err" id="cl-auto-err" role="alert"></div>
+          ${can ? '<div><button class="btn" type="submit">Salvar</button></div>' : ''}
+        </form></section>`;
+    },
+    listen(body) {
+      body.addEventListener('change', (e) => {
+        const t = e.target, sel = cleanupView.sel;
+        if (t.dataset.cl === 'build_cache') sel.build = t.checked;
+        else if (t.dataset.cl === 'dangling') sel.dangling = t.checked;
+        else if (t.dataset.cl === 'logs') { // marca/desmarca todas as apps
+          sel.apps = new Set(t.checked ? clLogApps(S.cl.disk).map((g) => g.app) : []);
+        } else if (t.dataset.clapp) {
+          if (t.checked) sel.apps.add(t.dataset.clapp); else sel.apps.delete(t.dataset.clapp);
+        } else if (t.id === 'cl-auto-on') {
+          cleanupView.saveAuto(t.checked);
+          return;
+        } else return;
+        cleanupView.render();
+      });
+      body.addEventListener('submit', (e) => {
+        if (e.target.id !== 'cl-auto') return;
+        e.preventDefault();
+        cleanupView.saveAuto($('#cl-auto-on').checked);
+      });
+      body.addEventListener('click', async (e) => {
+        if (!e.target.closest('[data-cla="run"]')) return;
+        const pk = cleanupView.picked();
+        if (!pk.size) return;
+        const lines = [];
+        if (pk.build) lines.push(['build_cache', CL.build_cache.name]);
+        if (pk.dangling) lines.push(['dangling', CL.dangling.name]);
+        if (pk.logs.length) lines.push(['logs', `Logs de ${pk.appNames.join(', ')}`]);
+        const ok = await confirmDialog({ title: `Limpar ${bytes(pk.size)} do disco?`, ok: 'Limpar', danger: true,
+          body: `<p>Não dá para desfazer. O que acontece:</p><ul class="cl-confirm">${lines.map(([k, t]) => `<li><b>${esc(t)}</b>: ${esc(CL[k].cons)}</li>`).join('')}</ul>
+            <p>Nenhuma app para: volumes, contêineres, redes e imagens em uso não são tocados. Vale para o servidor todo.</p>` });
+        if (!ok) return;
+        try {
+          await api('/api/cleanup/run', { method: 'POST', body: JSON.stringify({ buildCache: pk.build, dangling: pk.dangling, logs: pk.logs, confirm: true }) });
+          toast('Limpando… pode levar alguns minutos.');
+        } catch (ex) { if (ex.message !== 'login') toast(ex.message); }
+        cleanupView.load();
+      });
+    },
+    async saveAuto(on) {
+      const a = { enabled: on, threshold: +$('#cl-thr').value, buildCache: $('#cl-a-build').checked, dangling: $('#cl-a-dang').checked,
+        logs: $('#cl-a-logs').checked, logsOverMb: +$('#cl-a-mb').value };
+      if (on && !S.cl.auto.enabled) {
+        const what = [a.buildCache && 'o cache de build', a.dangling && 'as imagens sem nome', a.logs && `os logs maiores que ${a.logsOverMb} MB`].filter(Boolean);
+        const ok = await confirmDialog({ title: 'Ligar a limpeza automática?', ok: 'Ligar',
+          body: `<p>Quando o disco passar de <b>${a.threshold}%</b>, o painel limpa sozinho ${esc(what.join(', ') || 'o que estiver marcado')}, no máximo uma vez a cada 6 h.</p>
+            <ul class="cl-confirm">${[a.buildCache && 'build_cache', a.dangling && 'dangling', a.logs && 'logs'].filter(Boolean).map((k) => `<li><b>${CL[k].name}</b>: ${esc(CL[k].cons)}</li>`).join('')}</ul>
+            <p>Nenhuma app para. Cada limpeza fica no histórico e avisa pelo WhatsApp.</p>` });
+        if (!ok) { $('#cl-auto-on').checked = false; return; }
+      }
+      try {
+        const j = await api('/api/cleanup/auto', { method: 'POST', body: JSON.stringify(a) });
+        S.cl.auto = j.auto;
+        toast(j.auto.enabled ? `Limpeza automática ligada (acima de ${j.auto.threshold}%).` : 'Limpeza automática desligada.');
+        document.activeElement.blur();
+        cleanupView.render();
+      } catch (ex) {
+        if (ex.message === 'login') return;
+        if ($('#cl-auto-err')) $('#cl-auto-err').textContent = ex.message;
+        $('#cl-auto-on').checked = S.cl.auto.enabled;
+      }
+    },
+  };
+
+  // ------------------------------------------------------------------ aba: usuários
+  const usersView = {
+    mount(v) {
+      v.innerHTML = `<div class="page"><div class="section-h"><div><h2>${icon('users')} Usuários</h2>
+        <p>Quem entra no painel e o que cada um pode fazer. Sem permissão marcada, a pessoa só vê (dados, logs e o chat com a IA).</p></div></div>
+        <div id="us-body"></div></div>`;
+      usersPanel($('#us-body'));
+    },
+  };
+
+  const VIEWS = { overview, servers: serversView, cleanup: cleanupView, users: usersView, infos: infosView, ai: aiView, apps: appsView, traffic: trafficView, logs: logsView, system: systemView, limits: limitsView, notify: notifyView };
 
   // ------------------------------------------------------------------ eventos globais
   document.addEventListener('click', async (e) => {
