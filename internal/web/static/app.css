@@ -579,3 +579,13 @@ a.btn { text-decoration: none; color: inherit; }
 .update-bar > span { display: inline-flex; align-items: center; gap: 8px; }
 .update-bar svg.i { color: var(--accent); width: 16px; height: 16px; }
 @media (max-width: 720px) { .update-bar { bottom: calc(80px + env(safe-area-inset-bottom)); } }
+
+/* ---------- instalar como app ---------- */
+.install-bar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(80px + env(safe-area-inset-bottom)); z-index: 54;
+  display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px;
+  padding: 6px 6px 6px 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, .18); font-size: .84rem; width: max-content; max-width: calc(100% - 24px);
+}
+.install-bar > span { display: inline-flex; align-items: center; gap: 8px; }
+.install-bar svg.i { color: var(--accent); width: 16px; height: 16px; }
+.install-bar .icon-btn { width: 30px; height: 30px; }

@@ -289,3 +289,46 @@ func TestVersionStamp(t *testing.T) {
 		t.Fatalf("app.js?v=: %d", rec.Code)
 	}
 }
+
+// O que o navegador precisa para oferecer "instalar app": manifesto com os
+// ícones PNG e o service worker (sem cache) servido como JavaScript.
+func TestInstallableAssets(t *testing.T) {
+	h := New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil).Handler()
+	get := func(p string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", p, nil))
+		return rec
+	}
+	var m struct {
+		Display string `json:"display"`
+		Icons   []struct {
+			Src, Sizes, Purpose string
+		} `json:"icons"`
+	}
+	if err := json.Unmarshal(get("/manifest.webmanifest?v=dev").Body.Bytes(), &m); err != nil || m.Display != "standalone" {
+		t.Fatalf("manifesto: %v %+v", err, m)
+	}
+	need := map[string]bool{"icon-192.png": false, "icon-512.png": false, "icon-maskable-512.png": false}
+	for _, ic := range m.Icons {
+		if _, ok := need[ic.Src]; ok {
+			need[ic.Src] = true
+			if r := get("/" + ic.Src); r.Code != 200 || r.Header().Get("Content-Type") != "image/png" {
+				t.Fatalf("%s: %d %s", ic.Src, r.Code, r.Header().Get("Content-Type"))
+			}
+		}
+	}
+	for k, ok := range need {
+		if !ok {
+			t.Fatalf("manifesto sem %s", k)
+		}
+	}
+	if r := get("/sw.js"); r.Code != 200 || !strings.Contains(r.Header().Get("Content-Type"), "javascript") || strings.Contains(r.Body.String(), "caches.open") {
+		t.Fatalf("sw.js: %d %s (não pode guardar cache)", r.Code, r.Header().Get("Content-Type"))
+	}
+	if r := get("/apple-touch-icon.png"); r.Code != 200 {
+		t.Fatal("ícone do iPhone")
+	}
+	if !strings.Contains(get("/").Body.String(), `rel="apple-touch-icon"`) {
+		t.Fatal("index sem o ícone do iPhone")
+	}
+}
