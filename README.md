@@ -42,6 +42,7 @@ aplicações (cada projeto do Docker Compose vira uma app).
 - [O que o painel mostra](#o-que-o-painel-mostra)
 - [Chat com IA (DeepSeek)](#chat-com-ia-deepseek)
 - [Notificações pelo WhatsApp](#notificações-pelo-whatsapp)
+- [Vários servidores](#vários-servidores)
 - [Pausar e retomar uma aplicação](#pausar-e-retomar-uma-aplicação)
 - [Usuários e permissões](#usuários-e-permissões)
 - [Verificação em duas etapas](#verificação-em-duas-etapas)
@@ -314,6 +315,53 @@ mostra o que saiu, o que ficou segurado e o que falhou (com o motivo).
 
 **Desligar o WhatsApp de vez** (libera os ~250 MB): no `.env`, tire `whatsapp` de
 `COMPOSE_PROFILES` e rode `docker compose up -d --remove-orphans`.
+
+**Vários servidores, um WhatsApp só:** um servidor conectado a um painel central pode
+mandar os avisos dele pelo WhatsApp do central. Ver [Vários servidores](#vários-servidores).
+
+---
+
+## Vários servidores
+
+Quem tem o painel em mais de um servidor pode juntar tudo num **painel central**: a aba
+**Servidores** mostra um card por servidor (este primeiro) com o estado (tudo certo,
+alertas, urgentes ou **sem notícias**), CPU, memória, disco, apps no ar, banda do mês, os
+alertas mais graves, a versão e o botão **Abrir painel**. Um servidor só também vê a
+aba, com o card dele e o convite para conectar outros.
+
+**Conectar (2 minutos, administrador):**
+
+1. No **central** (o que tem domínio fixo e, de preferência, o WhatsApp conectado):
+   Servidores → **Gerar token**, com o nome do outro servidor. Marque **Pode usar o
+   WhatsApp deste painel** se quiser que os avisos dele saiam por aqui. O token
+   (`vps_…`) aparece **uma vez**: copie.
+2. No **outro servidor**: Servidores → **Conectar a um painel central**, com o endereço
+   do central (ex.: `https://painel.exemplo.com`) e o token. O painel testa na hora.
+3. Pronto: em até um minuto o card aparece no central.
+
+**Como funciona:** quem chama é sempre o servidor conectado: a cada minuto ele manda ao
+central um resumo (CPU, memória, disco, apps, contagem e títulos dos alertas, banda, versão
+e o endereço do painel dele). Por isso ele **não precisa de endereço público** (serve até
+o endereço provisório da Cloudflare), e o central **não consegue mexer em nada** nele:
+não lê logs, não pausa apps, não entra. Servidor que passa de 3 minutos sem mandar vira
+**alerta urgente no central** (aba Infos e WhatsApp): é o aviso de que ele caiu de vez,
+justamente quando ele mesmo não consegue avisar. **Desconectar** pela tela avisa o central
+(sem alerta); **Revogar** no central corta o servidor na hora.
+
+**WhatsApp compartilhado:** as conexões de WhatsApp são limitadas, então um número só
+pode atender todos os servidores. Num servidor conectado com token liberado, ligue
+**Mandar os avisos daqui pelo WhatsApp do central** (Servidores). A aba Notificações dele
+continua decidindo **o que** avisar e **quando** (tipos, silêncio, limite), mas as
+mensagens saem pelo WhatsApp do central, **só para os destinos do central**, com
+"Servidor conectado: nome" no fim. O servidor conectado não precisa do WhatsApp próprio
+(dá para tirar `whatsapp` do `COMPOSE_PROFILES` dele).
+
+**Segurança:** o token tem 256 bits aleatórios, fica no central só como hash
+(`/data/fleet-central.json`, 600) e no servidor conectado em `/data/fleet-remote.json`
+(600). Um token vazado só permite mandar resumos falsos daquele servidor e, se liberado,
+até 30 avisos por hora **para os destinos do central** (nunca para números escolhidos por
+quem tem o token), sempre com o nome do servidor no fim. O central limita o tamanho de
+tudo que recebe e só aceita links `http(s)` no "Abrir painel".
 
 ---
 
@@ -688,6 +736,9 @@ requisição; requisição sem resposta cai em 100 s.
   (`VPMON_WA_KEY`) que só o painel conhece; o banco dela fica numa rede sem saída.
   A tela nunca vê a chave. Nos logs, senha em URL (`postgresql://user:senha@…`) aparece
   mascarada.
+- **Vários servidores:** tokens por servidor, guardados só como hash no central,
+  revogáveis, e o servidor conectado só **manda** dados (o central não chama nada nele).
+  Ver [Vários servidores](#vários-servidores).
 - **Sem porta publicada** no servidor; a rede do proxy é `internal` (sem saída).
 - **Logs mostram o que as aplicações escrevem.** Se uma app grava segredo no
   log (ex.: token na URL), ele aparece no painel. Por isso o painel exige login.
@@ -856,7 +907,11 @@ validada para daltonismo nos dois temas. Status sempre com ícone + texto.
 `/api/system`, `/api/me` (usuário e permissões); `POST /api/login`, `/api/logout`, `/api/password`,
 `/api/login/2fa` (segundo passo), `/api/2fa/setup|enable|disable|recovery|dismiss` (o próprio 2FA),
 `/api/apps/pause` (ações); `GET/POST /api/users`, `POST /api/users/update|reset|delete|2fa-off`
-(gestão de usuários); `/api/settings*` e `/api/notify*` (administradores).
+(gestão de usuários); `/api/settings*` e `/api/notify*` (administradores); `GET /api/fleet/servers`
+(cards da aba Servidores), `GET /api/fleet`, `POST /api/fleet/tokens|tokens/revoke|connect|disconnect|whatsapp`
+(administradores). Entre painéis, sem cookie e com `Authorization: Bearer vps_…`:
+`POST /api/fleet/report` (resumo por minuto), `/api/fleet/notify` (aviso pelo WhatsApp do central) e
+`/api/fleet/bye` (desconexão).
 Períodos: `1h`, `6h`, `24h`, `7d`, `30d`, `1y`.
 Erros: `{"error": {"code": "...", "message": "..."}}`.
 
@@ -874,6 +929,7 @@ internal/store/       séries em anéis, banda por dia, estado salvo em disco
 internal/monitor/     coleta, agrupamento por app, alertas, limites, visões da API
 internal/ai/          cliente da DeepSeek (streaming + function calling) e o laço de ferramentas
 internal/notify/      notificações: cliente da Evolution (WhatsApp), alertas, resumos, análises da IA
+internal/fleet/       vários servidores: tokens e resumos no central, conexão e WhatsApp emprestado
 internal/web/         HTTP, login, troca de senha, chat (SSE), arquivos estáticos (static/)
 deploy/               compose.yml, env.example, receive.sh e on-server.sh (rodam no servidor)
 scripts/server.py     setup, deploy, logs, restart, rollback, password, ci-key
