@@ -65,6 +65,7 @@ type userBody struct {
 	Admin   bool   `json:"admin"`
 	Actions bool   `json:"actions"`
 	Manage  bool   `json:"manage"`
+	Clean   bool   `json:"clean"`
 }
 
 func (s *Server) readUserBody(w http.ResponseWriter, r *http.Request) (userBody, bool) {
@@ -85,17 +86,23 @@ func (s *Server) readUserBody(w http.ResponseWriter, r *http.Request) (userBody,
 }
 
 func permsText(v UserView) string {
-	switch {
-	case v.Admin:
+	if v.Admin {
 		return "administrador"
-	case v.Actions && v.Manage:
-		return "ações nas apps e gestão de usuários"
-	case v.Actions:
-		return "ações nas apps"
-	case v.Manage:
-		return "gestão de usuários"
 	}
-	return "só leitura"
+	var p []string
+	if v.Actions {
+		p = append(p, "ações nas apps")
+	}
+	if v.Manage {
+		p = append(p, "gestão de usuários")
+	}
+	if v.Clean {
+		p = append(p, "limpeza do disco")
+	}
+	if len(p) == 0 {
+		return "só leitura"
+	}
+	return strings.Join(p, ", ")
 }
 
 // audit registra a mudança no log e avisa no WhatsApp ("Segurança do painel").
@@ -115,7 +122,7 @@ func (s *Server) usersCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	v, pass, err := s.auth.CreateUser(userOf(r), b.Name, Perms{Admin: b.Admin, Actions: b.Actions, Manage: b.Manage})
+	v, pass, err := s.auth.CreateUser(userOf(r), b.Name, Perms{Admin: b.Admin, Actions: b.Actions, Manage: b.Manage, Clean: b.Clean})
 	if err != nil {
 		userErr(w, err)
 		return
@@ -129,7 +136,7 @@ func (s *Server) usersUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	v, err := s.auth.UpdateUser(userOf(r), b.Name, Perms{Admin: b.Admin, Actions: b.Actions, Manage: b.Manage})
+	v, err := s.auth.UpdateUser(userOf(r), b.Name, Perms{Admin: b.Admin, Actions: b.Actions, Manage: b.Manage, Clean: b.Clean})
 	if err != nil {
 		userErr(w, err)
 		return
