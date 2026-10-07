@@ -17,7 +17,7 @@ USO:
   python scripts/server.py deploy          # compila aqui (Go, linux/arm64), envia e sobe
   python scripts/server.py restart         # recria os contêineres (relê o .env)
   python scripts/server.py rollback        # volta para a versão anterior
-  python scripts/server.py password        # esqueci a senha: gera uma nova (ou VPMON_NEW_PASSWORD=...)
+  python scripts/server.py password <usuário>  # esqueci a senha: gera uma provisória (troca no próximo acesso)
   python scripts/server.py url             # endereço do Quick Tunnel (quando não há domínio)
   python scripts/server.py setup           # 1ª vez: /opt/vpserver-monitoring, .env, receive
   python scripts/server.py ci-key <arquivo.pub>   # autoriza a chave de deploy do GitHub Actions
@@ -30,6 +30,7 @@ O QUE ESTE SCRIPT NUNCA FAZ (o servidor pode ter outras apps):
   - imprimir o .env (a senha só aparece quando é gerada, uma vez).
 """
 import argparse
+import re
 import base64
 import io
 import os
@@ -229,23 +230,15 @@ fi
         print("==> .env já existia: nada mudou nele. Pastas e bin/receive conferidos.")
 
 
-def cmd_password(_):
-    password = os.environ.get("VPMON_NEW_PASSWORD") or secrets.token_urlsafe(18)
-    line = base64.b64encode(env_line("VPMON_PASSWORD", password).encode()).decode()
-    p = remote(rf"""
-set -e
-cd {BASE}
-new=$(echo {line} | base64 -d)
-grep -v '^VPMON_PASSWORD=' .env > .env.tmp; echo "$new" >> .env.tmp
-chmod 600 .env.tmp && mv .env.tmp .env
-sudo rm -f {BASE}/data/auth.json   # senha trocada pela tela deixa de valer
-{COMPOSE} up -d --no-deps --force-recreate monitor >/dev/null
-echo ok
-""", capture=True)
+def cmd_password(a):
+    # o próprio painel troca a senha no users.json (os outros usuários ficam como estão)
+    if not re.fullmatch(r"[A-Za-z0-9._-]{3,32}", a.user):
+        raise SystemExit("usuário inválido")
+    p = remote(f"docker exec vpserver-monitor /app/vpmon reset-password {a.user}", capture=True, timeout=60)
     if p.returncode:
-        sys.stderr.write(p.stderr.decode())
+        sys.stderr.write(p.stderr.decode() or p.stdout.decode())
         raise SystemExit(p.returncode)
-    print(f"==> senha trocada (todas as sessões caíram). Nova senha: {password}")
+    print("==> " + p.stdout.decode().strip())
 
 
 def cmd_ci_key(a):
@@ -290,7 +283,7 @@ def main():
     sub.add_parser("restart", help="recria os contêineres (relê o .env)")
     sub.add_parser("rollback", help="volta para a versão anterior")
     sub.add_parser("setup", help="1ª vez")
-    sub.add_parser("password", help="troca a senha do painel")
+    sub.add_parser("password", help="esqueci a senha: gera uma provisória").add_argument("user", help="usuário do painel")
     ck = sub.add_parser("ci-key", help="autoriza a chave de deploy do GitHub Actions")
     ck.add_argument("pubkey")
     sub.add_parser("url", help="endereço do Quick Tunnel")

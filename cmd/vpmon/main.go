@@ -2,6 +2,7 @@
 //
 //	vpmon              sobe o coletor e o painel web
 //	vpmon init         prepara a pasta de instalação (compose.yml, .env, data/) — ver internal/setup
+//	vpmon reset-password <usuário>  esqueci a senha: gera uma provisória (o painel pode estar rodando)
 //	vpmon healthcheck  usado pelo healthcheck do Docker (a imagem não tem curl)
 //	vpmon version
 package main
@@ -62,6 +63,18 @@ func main() {
 			return
 		case "version":
 			fmt.Println(version)
+			return
+		case "reset-password":
+			if len(os.Args) < 3 {
+				fmt.Fprintln(os.Stderr, "uso: vpmon reset-password <usuário>")
+				os.Exit(2)
+			}
+			pass, err := web.ResetPasswordOffline(env("VPMON_DATA", "/data"), env("VPMON_USER", web.DefaultUser), os.Args[2])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "erro:", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Senha provisória de %s: %s\nNo próximo acesso o painel pede uma senha nova. As sessões abertas dessa pessoa caíram.\n", os.Args[2], pass)
 			return
 		case "init":
 			err := setup.Run(setup.Options{Out: env("VPMON_INIT_DIR", "/out"), DockerGID: os.Getenv("DOCKER_GID"),
