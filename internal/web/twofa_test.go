@@ -187,3 +187,66 @@ func TestNewRecoveryCodesNeedCode(t *testing.T) {
 		t.Fatalf("sem QR pendente: %v", err)
 	}
 }
+
+// As rotas da tela: QR, ligar (cookie novo), dispensar a recomendação, desligar e o admin desligando o de outra pessoa.
+func TestTwoFactorRoutes(t *testing.T) {
+	a, _ := newAuth2FA(t, "chefe")
+	h := New(nil, a, true, ai.Config{}, "", nil).Handler()
+	ck := sessionCookie(a, "chefe")
+	me := func(c *http.Cookie) TwoFAInfo {
+		req := httptest.NewRequest("GET", "/api/me", nil)
+		req.AddCookie(c)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var m struct {
+			TwoFA TwoFAInfo `json:"twoFA"`
+		}
+		json.NewDecoder(rec.Body).Decode(&m)
+		return m.TwoFA
+	}
+	if r := postJSON(h, "/api/2fa/dismiss", `{}`, ck); r.Code != 200 || !me(ck).Asked || me(ck).Enabled {
+		t.Fatalf("dispensar a recomendação: %d %+v", r.Code, me(ck))
+	}
+	r := postJSON(h, "/api/2fa/setup", `{}`, ck)
+	var setup struct{ Secret, URI string }
+	json.NewDecoder(r.Body).Decode(&setup)
+	if r.Code != 200 || !strings.HasPrefix(setup.URI, "otpauth://totp/VPServer:chefe?") || !strings.Contains(setup.Secret, " ") {
+		t.Fatalf("setup: %d %+v", r.Code, setup)
+	}
+	sec := strings.ReplaceAll(setup.Secret, " ", "")
+	if r := postJSON(h, "/api/2fa/enable", `{"code":"111111"}`, ck); r.Code != 400 && code(t, sec, 0) != "111111" {
+		t.Fatalf("código errado ao ligar: %d", r.Code)
+	}
+	r = postJSON(h, "/api/2fa/enable", `{"code":"`+code(t, sec, 0)+`"}`, ck)
+	fresh := cookieNamed(r, cookieName)
+	if r.Code != 200 || fresh == nil || !strings.Contains(r.Body.String(), `"codes":[`) {
+		t.Fatalf("ligar: %d %s", r.Code, r.Body)
+	}
+	if !me(fresh).Enabled || me(fresh).RecoveryLeft != recoveryN {
+		t.Fatalf("depois de ligar, o cookie novo vale e o 2FA aparece ligado: %+v", me(fresh))
+	}
+	if r := postJSON(h, "/api/2fa/setup", `{}`, fresh); r.Code != 400 {
+		t.Fatal("já ligado: não gera outro QR")
+	}
+
+	// o admin desliga o 2FA de outra pessoa
+	boss, _ := a.Get("chefe")
+	_, pass, _ := a.CreateUser(boss, "maria", Perms{})
+	a.ChangePassword("maria", pass, "senha-da-maria-1", "")
+	enable2FA(t, a, "maria")
+	if r := postJSON(h, "/api/users/2fa-off", `{"name":"maria"}`, fresh); r.Code != 200 {
+		t.Fatalf("admin desligando o 2FA da maria: %d %s", r.Code, r.Body)
+	}
+	if u, _ := a.Get("maria"); u.TOTP != nil {
+		t.Fatal("deveria estar desligado")
+	}
+
+	// desligar o próprio: senha e código
+	if r := postJSON(h, "/api/2fa/disable", `{"password":"errada","code":"`+code(t, sec, 1)+`"}`, fresh); r.Code != 400 {
+		t.Fatalf("senha errada: %d", r.Code)
+	}
+	r = postJSON(h, "/api/2fa/disable", `{"password":"senha-do-env-1","code":"`+code(t, sec, 1)+`"}`, fresh)
+	if r.Code != 200 || me(cookieNamed(r, cookieName)).Enabled {
+		t.Fatalf("desligar: %d %s", r.Code, r.Body)
+	}
+}

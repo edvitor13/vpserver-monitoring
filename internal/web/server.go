@@ -108,6 +108,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/users/update", manage(s.usersUpdate))
 	mux.HandleFunc("POST /api/users/reset", manage(s.usersReset))
 	mux.HandleFunc("POST /api/users/delete", manage(s.usersDelete))
+	mux.HandleFunc("POST /api/users/2fa-off", manage(s.usersTwoFAOff))
+	// verificação em duas etapas de quem está logado
+	mux.HandleFunc("POST /api/2fa/setup", s.private(s.twofaSetup))
+	mux.HandleFunc("POST /api/2fa/enable", s.private(s.twofaEnable))
+	mux.HandleFunc("POST /api/2fa/disable", s.private(s.twofaDisable))
+	mux.HandleFunc("POST /api/2fa/recovery", s.private(s.twofaRecovery))
+	mux.HandleFunc("POST /api/2fa/dismiss", s.private(s.twofaDismiss))
 	return secureHeaders(withGzip(mux))
 }
 
