@@ -48,6 +48,7 @@ aplicações (cada projeto do Docker Compose vira uma app).
 - [Usuários e permissões](#usuários-e-permissões)
 - [Verificação em duas etapas](#verificação-em-duas-etapas)
 - [No celular](#no-celular)
+- [Versões e novidades](#versões-e-novidades)
 - [Como funciona](#como-funciona)
 - [Aplicações novas aparecem sozinhas](#aplicações-novas-aparecem-sozinhas)
 - [Como a banda é medida](#como-a-banda-é-medida)
@@ -485,6 +486,33 @@ tela" nas Notificações.
 
 ---
 
+## Versões e novidades
+
+Cada mudança que entra na `master` vira uma **versão nova sozinha** (`vMAIOR.MENOR.CORREÇÃO`),
+sem ninguém editar número:
+
+- **etiqueta do PR** decide o salto: `breaking` (algo incompatível) sobe a maior (`2.0.0`),
+  `enhancement` (recurso novo) a menor (`1.5.0`), qualquer outra (`bug`, documentação)
+  a correção (`1.4.3`);
+- o CI cria a **tag** e uma **Release** no GitHub com o resumo do PR: é a lista de
+  [novidades](https://github.com/edvitor13/vpserver-monitoring/releases);
+- a imagem sai com `:latest`, `:<versão>` (ex. `:1.4.0`) e `:<commit>`.
+
+**Na tela:** o rodapé (e a tela de login) mostra **VPServer v1.4.0**. Passando o mouse (no
+celular, tocando) aparece a **data e a hora da versão** e o commit; **Novidades** abre a
+Release daquela versão. Configurações também mostra a versão. Na linha de comando:
+`docker exec vpserver-monitor /app/vpmon version` (ou `/vpmon version` na imagem).
+
+**Fixar uma versão** (quem instala pela imagem): no `.env`,
+`VPMON_IMAGE=ghcr.io/edvitor13/vpserver-monitoring:1.4.0` e `docker compose up -d`. Para
+voltar a acompanhar as novas, `:latest`.
+
+Um deploy manual (`server.py deploy`) de um commit sem versão aparece como
+`<última versão>-dev.<commit>` (ex. `1.4.0-dev.abc1234`), para não se confundir com uma
+versão lançada.
+
+---
+
 ## No celular
 
 A mesma página serve no celular: o menu vai para baixo (Início, Apps, Infos, IA e
@@ -839,11 +867,14 @@ VPMON_KEY=~/.ssh/<sua-chave>
 `.github/workflows/deploy.yml`:
 
 1. **test** — `gofmt`, `go vet`, `go test`, sintaxe do JS;
-2. **image** — publica `ghcr.io/<dono>/vpserver-monitoring:latest` e `:<commit>`
-   (arm64 + amd64), que é o que o `init` instala;
-3. **deploy** — só se a variável `VPSERVER_DEPLOY` for `true`: compila o binário,
+2. **version** — calcula a versão nova pelas etiquetas do PR
+   (`scripts/next-version.sh`), cria a tag e a Release (ver
+   [Versões e novidades](#versões-e-novidades));
+3. **image** — publica `ghcr.io/<dono>/vpserver-monitoring:latest`, `:<versão>` e
+   `:<commit>` (arm64 + amd64), que é o que o `init` instala;
+4. **deploy** — só se a variável `VPSERVER_DEPLOY` for `true`: compila o binário,
    envia por SSH com uma **chave restrita** (`restrict,command="/opt/vpserver-monitoring/bin/receive"`
-   no `authorized_keys`), o `receive` extrai em `releases/<data>-<commit>`, sobe e
+   no `authorized_keys`), o `receive` extrai em `releases/<data>-<versão>`, sobe e
    espera o healthcheck. **Se a versão nova não ficar saudável, volta sozinha
    para a anterior.** Guarda as 5 últimas. Com `VPSERVER_URL`, confere o `/healthz`.
 
@@ -898,7 +929,7 @@ quem cria é o `vpmon init`; no deploy por pacote, o modelo é
 | `VPMON_FORCE_PASSWORD_CHANGE` | `true` no `init` | obriga a trocar a senha inicial no primeiro acesso |
 | `VPMON_TUNNEL_TOKEN` | — | token do seu túnel na Cloudflare (domínio próprio) |
 | `VPMON_TUNNEL_COMMAND` | `tunnel --no-autoupdate run` | sem domínio: `tunnel --no-autoupdate --url http://vpserver-monitor:8080` (Quick Tunnel) |
-| `VPMON_IMAGE` | `ghcr.io/edvitor13/vpserver-monitoring:latest` | imagem (fixe uma versão, ex. `:4b4c69d`, se quiser) |
+| `VPMON_IMAGE` | `ghcr.io/edvitor13/vpserver-monitoring:latest` | imagem (fixe uma versão, ex. `:1.4.0`, se quiser) |
 | `DOCKER_GID` | `988` | grupo `docker` do host (o proxy precisa dele para abrir o socket) |
 | `VPMON_SECRET` | gerado em `data/secret` | segredo que assina o cookie |
 | `VPMON_SERVER_NAME` | nome da instância na Oracle, ou o hostname | nome no topo do painel |
