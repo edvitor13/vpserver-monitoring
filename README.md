@@ -402,8 +402,19 @@ tela" nas Notificações.
 
 A mesma página serve no celular: o menu vai para baixo (Início, Apps, Infos, IA e
 **Mais**, com as outras seções, Configurações, tema e sair), cartões em uma coluna,
-tabelas roláveis e janelas que ocupam a tela. No navegador do celular, **Adicionar à
-tela inicial** instala o painel como app (ícone próprio, abre em tela cheia).
+tabelas roláveis e janelas que ocupam a tela.
+
+**Instalar como app (PWA):** toque em **Instalar app** (no "Mais", em Configurações →
+Minha conta ou no aviso que aparece uma vez depois do login). No Android/Chrome abre a
+instalação do próprio navegador; no iPhone o painel mostra o caminho (Safari →
+Compartilhar → **Adicionar à Tela de Início**). Fica com ícone próprio e abre em tela
+cheia. No computador, o Chrome e o Edge também instalam.
+
+**Atualizações:** o painel nunca guarda uma versão velha da tela (o service worker existe
+só para permitir a instalação e não usa cache). Toda resposta do servidor diz a versão no
+ar (`X-VPMon-Version`): uma tela aberta há tempos, inclusive o app instalado, percebe a
+versão nova e se atualiza sozinha na tela de login, ou mostra **Nova versão do painel ·
+Atualizar** quando você está usando. A versão aparece em Configurações.
 
 ---
 
@@ -883,6 +894,9 @@ scripts/server.py     setup, deploy, logs, restart, rollback, password, ci-key
   leituras (10 s). A projeção do mês precisa de 6 h; o risco de ociosidade, de 7 dias.
 - **Banda por aplicação maior que o total:** é esperado (tráfego interno entre
   contêineres). Veja [Como a banda é medida](#como-a-banda-é-medida).
+- **O celular volta para o login depois de entrar** (versões antes de outubro de 2026):
+  é a tela antiga guardada na memória do celular. Feche o painel por completo (ou puxe a
+  página para baixo) e abra de novo. A partir desta versão a tela se atualiza sozinha.
 - **WhatsApp "serviço fora do ar" logo depois de subir:** a Evolution leva ~1 min para
   ficar pronta (migra o banco na primeira vez). Persistindo: `docker compose logs whatsapp`.
 - **WhatsApp desconectou sozinho:** acontece se o aparelho ficar 14 dias sem abrir o
