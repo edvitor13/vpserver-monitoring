@@ -144,6 +144,25 @@
 
   // ------------------------------------------------------------------ versão (tela aberta há tempos x painel atualizado)
   const APP_VERSION = (document.querySelector('meta[name="vpmon-version"]') || {}).content || '';
+  const APP_COMMIT = (document.querySelector('meta[name="vpmon-commit"]') || {}).content || '';
+  const APP_BUILT = (document.querySelector('meta[name="vpmon-built"]') || {}).content || '';
+  const RELEASES = 'https://github.com/edvitor13/vpserver-monitoring/releases';
+  // "v1.4.0" para versão lançada; o resto (dev, 1.4.0-dev.abc1234) como veio
+  const verLabel = () => (/^\d+\.\d+\.\d+$/.test(APP_VERSION) ? 'v' + APP_VERSION : APP_VERSION || 'dev');
+  function verDate() {
+    const d = APP_BUILT ? new Date(APP_BUILT) : null;
+    if (!d || isNaN(d)) return '';
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} às ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  // rodapé: a versão; passando o mouse (ou tocando) aparece a data e o commit
+  function versionHTML() {
+    const when = verDate();
+    const tip = [when ? `Versão de ${when}` : 'Versão sem data (compilada fora do CI)', APP_COMMIT && `commit ${APP_COMMIT}`].filter(Boolean).join(' · ');
+    const tag = /^\d+\.\d+\.\d+$/.test(APP_VERSION) ? `${RELEASES}/tag/v${APP_VERSION}` : RELEASES;
+    return `<span class="ver-wrap"><button class="ver" type="button" aria-describedby="ver-tip">VPServer ${esc(verLabel())}</button>
+      <span class="ver-tip" id="ver-tip" role="tooltip">${esc(tip)}</span></span>
+      <a class="ver-new" href="${esc(tag)}" target="_blank" rel="noopener noreferrer">Novidades</a>`;
+  }
   let newVersion = '';
   // o servidor manda a versão dele em toda resposta; se a tela é de outra, ela
   // se atualiza: sozinha quando não há sessão (login), com aviso dentro do painel
@@ -377,7 +396,7 @@
           <div class="form-err" id="login-err" role="alert">${esc(msg || '')}</div>
           <button class="btn primary" type="submit">Entrar</button>
         </form>
-      </div></div>`;
+      </div><footer class="foot foot-login">${versionHTML()}</footer></div>`;
     $('#lu').focus();
     $('#login-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -603,6 +622,7 @@
         <nav class="tabs" aria-label="Seções">${visibleTabs().map(([k, l, ic]) => `<a class="tab" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}${l}${countHTML(k)}</a>`).join('')}</nav>
       </div></header>
       <main id="view"></main>
+      <footer class="foot">${versionHTML()}</footer>
       <nav class="bnav" aria-label="Seções">${BNAV.map((k) => { const [, , ic, short] = TABS.find((t) => t[0] === k); return `<a class="bn" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${short}</span>${countHTML(k)}</a>`; }).join('')}
         <button class="bn" type="button" data-act="more" id="bn-more">${icon('more')}<span>Mais</span></button></nav>`;
   }
@@ -1241,7 +1261,7 @@
     m.className = 'modal';
     m.innerHTML = `<div class="card login-card settings-card" role="dialog" aria-modal="true" aria-labelledby="st-t">
       <div class="card-h"><div><h2 id="st-t">${icon('gear')}Configurações</h2>
-        <div class="muted st-who">${icon('user')}${esc(me.user)} · ${esc(roleText(me))} · versão ${esc(APP_VERSION || '?')}</div></div>
+        <div class="muted st-who">${icon('user')}${esc(me.user)} · ${esc(roleText(me))} · ${esc(verLabel())}${verDate() ? ` de ${esc(verDate())}` : ''}</div></div>
         <button class="icon-btn" type="button" data-act="close" aria-label="Fechar">${icon('x')}</button></div>
       ${tabs.length > 1 ? `<div class="seg" role="tablist" style="margin-bottom:14px">
         ${tabs.map(([k, l]) => `<button type="button" data-act="stab" data-v="${k}" aria-pressed="${tab === k}">${l}</button>`).join('')}</div>` : ''}
