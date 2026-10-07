@@ -101,6 +101,8 @@
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
     install: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
     broom: '<path d="m13 11 8-8"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.5-1.5"/>',
+    chev: '<polyline points="6 9 12 15 18 9"/>',
+    eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     layers: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
     link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
     ext: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
@@ -237,10 +239,22 @@
   }
 
   // ------------------------------------------------------------------ API
+  // vendo outro servidor (pelo painel central): só estes caminhos vão para ele
+  const REMOTE_GET = new Set(['/api/overview', '/api/history/host', '/api/history/apps', '/api/history/unit', '/api/traffic',
+    '/api/system', '/api/cleanup', '/api/logs/targets', '/api/logs']);
+  const REMOTE_POST = new Set(['/api/apps/pause', '/api/cleanup/run', '/api/cleanup/auto']);
+  function remotePath(path, method) {
+    if (!S.remote) return path;
+    const p = path.split('?')[0];
+    if ((method === 'GET' && REMOTE_GET.has(p)) || (method === 'POST' && REMOTE_POST.has(p))) {
+      return `/api/fleet/view/${encodeURIComponent(S.remote.id)}${path}`;
+    }
+    return path;
+  }
   async function api(path, opts = {}) {
     const headers = { 'X-Requested-With': 'vpmon' };
     if (opts.body) headers['Content-Type'] = 'application/json';
-    const r = await fetch(path, { credentials: 'same-origin', ...opts, headers });
+    const r = await fetch(remotePath(path, (opts.method || 'GET').toUpperCase()), { credentials: 'same-origin', ...opts, headers });
     checkVersion(r.headers.get('X-VPMon-Version'), r.status);
     const j = await r.json().catch(() => ({}));
     if (r.status === 401 && !path.startsWith('/api/login')) {
@@ -264,8 +278,13 @@
   }
 
   // ------------------------------------------------------------------ estado
+  function savedRemote() {
+    try { return JSON.parse(sessionStorage.getItem('vpmon-remote') || 'null'); } catch { return null; }
+  }
   const S = {
     ov: null,
+    remote: savedRemote(), // {id, name, logs, control}: vendo um servidor conectado
+    fleet: null, // /api/fleet/servers: este painel e os conectados
     tab: 'overview',
     range: store.get('range', '1h'),
     cleanup: [], // charts e timers da aba atual
@@ -590,19 +609,31 @@
     ['cleanup', 'Limpeza', 'broom', 'Limpeza'], ['users', 'Usuários', 'users', 'Usuários'],
     ['ai', 'IA', 'spark', 'IA'], ['notify', 'Notificações', 'bell', 'Avisos']]; // IA e WhatsApp juntas, no fim
   const BNAV = ['overview', 'apps', 'infos', 'ai']; // no celular, o resto fica em "Mais"
+  // só as visíveis (em outro servidor não há IA): completa com Servidores/Banda
+  const bnavTabs = () => {
+    const vis = visibleTabs().map(([k]) => k);
+    const out = BNAV.filter((k) => vis.includes(k));
+    for (const k of ['servers', 'traffic', 'logs']) if (out.length < 4 && vis.includes(k) && !out.includes(k)) out.push(k);
+    return out;
+  };
   // o que o usuário logado pode (a API recusa do mesmo jeito; aqui só some da tela)
   const can = {
     admin: () => !!(S.me && S.me.admin),
-    act: () => !!(S.me && (S.me.admin || S.me.actions)),
+    // em outro servidor, ações só com o controle total liberado por ele
+    act: () => !!(S.me && (S.me.admin || S.me.actions)) && (!S.remote || S.remote.control),
     manage: () => !!(S.me && (S.me.admin || S.me.manage)),
-    clean: () => !!(S.me && (S.me.admin || S.me.clean)),
+    clean: () => !!(S.me && (S.me.admin || S.me.clean)) && (!S.remote || S.remote.control),
   };
   const roleText = (u) => (u.admin ? 'Administrador'
     : [u.actions && 'Ações nas apps', u.manage && 'Gerencia usuários', u.clean && 'Limpa o disco'].filter(Boolean).join(' · ') || 'Só leitura');
-  const visibleTabs = () => TABS.filter(([k]) => (k !== 'notify' || can.admin()) && (k !== 'users' || can.manage()));
+  // em outro servidor: tudo dele, menos o que nunca vai à distância (usuários, IA, WhatsApp)
+  const REMOTE_TABS = new Set(['overview', 'servers', 'infos', 'apps', 'traffic', 'logs', 'system', 'limits', 'cleanup']);
+  const visibleTabs = () => TABS.filter(([k]) => (k !== 'notify' || can.admin()) && (k !== 'users' || can.manage())
+    && (!S.remote || (REMOTE_TABS.has(k) && (k !== 'logs' || S.remote.logs || S.remote.control))));
   const tabHref = (k) => `#/${k === 'overview' ? '' : k}`;
   const countHTML = (k) => (k === 'infos' ? '<span class="count infos-count" hidden></span>' : '');
   function renderShell() {
+    setTimeout(() => { renderPill(); renderStrip(); }, 0);
     $('#app').innerHTML = `
       <header class="top"><div class="top-in">
         <div class="bar">
@@ -610,6 +641,7 @@
             <div class="brand-logo">${icon('logo')}</div>
             <div class="brand-txt"><div class="brand-name">VPServer</div><div class="brand-sub" id="srv-sub">carregando…</div></div>
           </a>
+          <span id="srv-pill-wrap"></span>
           <div class="bar-actions">
             <span id="hdr-status"></span>
             <span class="updated" id="hdr-upd"></span>
@@ -620,11 +652,121 @@
           </div>
         </div>
         <nav class="tabs" aria-label="Seções">${visibleTabs().map(([k, l, ic]) => `<a class="tab" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}${l}${countHTML(k)}</a>`).join('')}</nav>
-      </div></header>
+      </div><div class="remote-strip" id="remote-strip" hidden></div></header>
       <main id="view"></main>
       <footer class="foot">${versionHTML()}</footer>
-      <nav class="bnav" aria-label="Seções">${BNAV.map((k) => { const [, , ic, short] = TABS.find((t) => t[0] === k); return `<a class="bn" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${short}</span>${countHTML(k)}</a>`; }).join('')}
+      <nav class="bnav" aria-label="Seções">${bnavTabs().map((k) => { const [, , ic, short] = TABS.find((t) => t[0] === k); return `<a class="bn" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${short}</span>${countHTML(k)}</a>`; }).join('')}
         <button class="bn" type="button" data-act="more" id="bn-more">${icon('more')}<span>Mais</span></button></nav>`;
+  }
+  // ------------------------------------------------------------------ servidores (trocar dentro do painel central)
+  const localName = () => (S.fleet && S.fleet.self && S.fleet.self.name) || (!S.remote && S.ov && S.ov.server.name) || 'este servidor';
+  const others = () => ((S.fleet && S.fleet.servers) || []);
+  function renderPill() {
+    const wrap = $('#srv-pill-wrap');
+    if (!wrap) return;
+    const r = S.remote;
+    const show = !!r || others().length > 0;
+    $('.bar') && $('.bar').classList.toggle('has-pill', show);
+    if (!show) { wrap.innerHTML = ''; return; }
+    const kind = r ? (r.control ? 'conectado · controle total' : 'conectado · só ver') : 'este servidor';
+    wrap.innerHTML = `<button class="srv-pill${r ? ' remote' : ''}" type="button" data-act="servers-menu" aria-haspopup="true" title="Trocar de servidor">
+      ${icon('server')}<span class="srv-pill-t"><b>${esc(r ? r.name : localName())}</b><small>${kind}</small></span>${icon('chev')}</button>`;
+  }
+  function renderStrip(err) {
+    const el = $('#remote-strip');
+    if (!el) return;
+    el.hidden = !S.remote;
+    if (!S.remote) { el.innerHTML = ''; return; }
+    el.classList.toggle('err', !!err);
+    el.innerHTML = `<div class="remote-strip-in">${icon(err ? 'warn' : 'layers')}<span>${err ? esc(err)
+      : `Vendo <b>${esc(S.remote.name)}</b> pelo painel central · ${S.remote.control ? 'controle total' : 'só ver'}`}</span>
+      <button type="button" data-act="pick-server" data-v="">Voltar para ${esc(localName())}</button></div>`;
+  }
+  async function loadFleet() {
+    try { S.fleet = await api('/api/fleet/servers'); } catch (e) { if (e.message === 'login') throw e; S.fleet = { servers: [] }; }
+    S.fleetAt = Date.now();
+    // o servidor que estava aberto deixou de compartilhar: volta para este
+    if (S.remote) {
+      const t = others().find((x) => x.id === S.remote.id);
+      if (!t || !t.viewable) { setRemote(null); toast('O servidor que estava aberto não está mais compartilhado: voltei para este.'); }
+      else setRemote({ id: t.id, name: t.name, logs: t.logs, control: t.control }, true);
+    }
+  }
+  function setRemote(r, quiet) {
+    S.remote = r;
+    try { r ? sessionStorage.setItem('vpmon-remote', JSON.stringify(r)) : sessionStorage.removeItem('vpmon-remote'); } catch { /* sem storage */ }
+    if (quiet) return;
+    S.ov = null;
+    S.lastOk = Date.now();
+  }
+  // trocar de servidor: id vazio = este painel
+  function pickServer(id) {
+    closeDrawer();
+    let next = null;
+    if (id) {
+      const t = others().find((x) => x.id === id);
+      if (!t || !t.viewable) { toast('Esse servidor não está compartilhado ou não está conectado agora.'); return; }
+      next = { id: t.id, name: t.name, logs: t.logs, control: t.control };
+    }
+    if ((S.remote && S.remote.id) === (next && next.id)) return;
+    setRemote(next);
+    renderShell();
+    if (!visibleTabs().some(([k]) => k === S.tab)) location.hash = '#/';
+    route();
+    poll();
+    toast(next ? `Vendo ${next.name}${next.control ? ' (controle total)' : ' (só ver)'}.` : `De volta a ${localName()}.`);
+  }
+  function srvState(rep, t) {
+    if (t && !t.online) return ['off', t.lastSeen ? 'sem notícias' : 'nunca conectou'];
+    if (t && !t.viewable) return ['off', 'não compartilha a tela'];
+    if (!rep) return ['off', ''];
+    if (rep.crit) return ['crit', rep.crit === 1 ? '1 urgente' : `${rep.crit} urgentes`];
+    if (rep.warn) return ['warn', rep.warn === 1 ? '1 alerta' : `${rep.warn} alertas`];
+    return ['ok', 'tudo certo'];
+  }
+  async function openServersMenu(anchor) {
+    closeDrawer();
+    await loadFleet().catch(() => {});
+    renderPill();
+    const btn = $('.srv-pill') || anchor;
+    const rect = btn.getBoundingClientRect();
+    const scrim = document.createElement('div');
+    scrim.className = 'scrim-clear';
+    scrim.dataset.act = 'close';
+    const m = document.createElement('div');
+    m.className = 'srv-menu';
+    m.setAttribute('role', 'menu');
+    const item = (id, name, rep, t, on) => {
+      const [lv, txt] = srvState(rep, t);
+      const off = t && !t.viewable;
+      return `<button class="srv-item${on ? ' on' : ''}" type="button" role="menuitem" data-act="pick-server" data-v="${esc(id)}" ${off ? 'disabled' : ''}>
+        <i class="dot ${lv}"></i><span class="srv-item-t"><b>${esc(name)}</b><small>${esc([t ? (t.control ? 'controle total' : t.viewable ? 'só ver' : '') : 'este servidor', txt].filter(Boolean).join(' · '))}</small></span>
+        ${on ? icon('ok') : ''}</button>`;
+    };
+    m.innerHTML = `<div class="srv-menu-h">Servidores</div>
+      ${item('', localName(), S.fleet && S.fleet.self, null, !S.remote)}
+      ${others().map((t) => item(t.id, t.name, t.report, t, S.remote && S.remote.id === t.id)).join('')}
+      <a class="srv-menu-foot" href="#/servers">Gerenciar conexões →</a>`;
+    document.body.append(scrim, m);
+    const w = Math.min(340, window.innerWidth - 24);
+    m.style.top = `${Math.round(rect.bottom + 6)}px`;
+    m.style.left = `${Math.round(Math.max(12, Math.min(rect.left, window.innerWidth - w - 12)))}px`;
+    S.drawer = { update() {}, reload() {}, destroy() {} };
+    $('.srv-item.on', m)?.focus();
+  }
+  // Visão geral: trocar de servidor por ali também
+  function renderSwitch() {
+    const el = $('#ov-servers');
+    if (!el) return;
+    if (!others().length) { el.hidden = true; el.innerHTML = ''; return; }
+    if (S.fleetAt && Date.now() - S.fleetAt > 30000) loadFleet().then(renderSwitch).catch(() => {});
+    const chip = (id, name, rep, t, on) => {
+      const [lv, txt] = srvState(rep, t);
+      return `<button class="chip-srv${on ? ' on' : ''}" type="button" data-act="pick-server" data-v="${esc(id)}" ${t && !t.viewable ? 'disabled' : ''}
+        aria-pressed="${on}"><i class="dot ${lv}"></i><span><b>${esc(name)}</b><small>${esc(t ? txt : `este servidor · ${txt}`)}</small></span></button>`;
+    };
+    el.hidden = false;
+    el.innerHTML = chip('', localName(), S.fleet.self, null, !S.remote) + others().map((t) => chip(t.id, t.name, t.report, t, S.remote && S.remote.id === t.id)).join('');
   }
   function isDark() {
     const t = document.documentElement.getAttribute('data-theme');
@@ -648,12 +790,13 @@
       cnt.title = `${crit} urgente(s), ${warn} alerta(s), ${o.alerts.length - crit - warn} informação(ões)`;
     });
     $('#hdr-upd').textContent = o.updated ? `atualizado ${hms(o.updated * 1000)}` : '';
+    renderPill();
     markTabs();
   }
   function markTabs() {
     $$('.tab, .bn[data-tab], .sheet-item[data-tab]').forEach((t) => t.setAttribute('aria-current', t.dataset.tab === S.tab ? 'page' : 'false'));
     const more = $('#bn-more');
-    if (more) more.setAttribute('aria-current', BNAV.includes(S.tab) ? 'false' : 'page');
+    if (more) more.setAttribute('aria-current', bnavTabs().includes(S.tab) ? 'false' : 'page');
   }
   // "Mais" no celular: as outras seções, Configurações, tema e sair
   function openMore() {
@@ -668,7 +811,7 @@
     sh.setAttribute('aria-label', 'Mais seções');
     sh.innerHTML = `<div class="sheet-grip"></div>
       <div class="sheet-who">${icon('user')}<span><b>${esc(S.me.user)}</b> · ${esc(roleText(S.me))}</span></div><div class="sheet-grid">
-      ${visibleTabs().filter(([k]) => !BNAV.includes(k)).map(([k, l, ic]) => `<a class="sheet-item" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${l}</span></a>`).join('')}
+      ${visibleTabs().filter(([k]) => !bnavTabs().includes(k)).map(([k, l, ic]) => `<a class="sheet-item" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${l}</span></a>`).join('')}
       </div><div class="sheet-sep"></div><div class="sheet-grid">
       ${canInstall() ? `<button class="sheet-item install-only" type="button" data-act="install">${icon('install')}<span>Instalar app</span></button>` : ''}
       <button class="sheet-item" type="button" data-act="settings">${icon('gear')}<span>Configurações</span></button>
@@ -706,13 +849,15 @@
     try {
       S.ov = await api('/api/overview');
       S.lastOk = Date.now();
+      renderStrip();
       renderHeader();
       const v = VIEWS[S.tab];
       if (v.update) v.update();
       if (S.drawer) S.drawer.update();
     } catch (e) {
       if (e.message === 'login') return;
-      if (Date.now() - S.lastOk > 15000) toast('Sem conexão com o painel — tentando de novo…');
+      if (S.remote) renderStrip(`${S.remote.name}: ${e.message}`);
+      else if (Date.now() - S.lastOk > 15000) toast('Sem conexão com o painel — tentando de novo…');
     }
     pollT = setTimeout(poll, 5000);
   }
@@ -753,6 +898,7 @@
   const overview = {
     mount(v) {
       v.innerHTML = `<div class="page">
+        <section class="srv-switch" id="ov-servers" aria-label="Servidores" hidden></section>
         <section class="alerts" id="ov-alerts"></section>
         <section class="kpis k6" id="ov-kpis"></section>
         <section class="card" id="ov-share"></section>
@@ -767,6 +913,7 @@
             ${chartCard('ch-disk', 'Disco', 'Leitura e escrita')}
           </div>
         </section></div>`;
+      renderSwitch();
       const s = (k) => cssVar(k);
       const C = {
         cpu: makeChart($('#ch-cpu'), { stacked: true, fmt: pct, softMax: 10, series: [
@@ -802,6 +949,7 @@
       overview.reload = () => { teardown(); route(); };
     },
     update() {
+      renderSwitch();
       const o = S.ov, h = o.host, t = o.traffic;
       const hot = o.alerts.filter((a) => a.level !== 'info');
       const nInfo = o.alerts.length - hot.length;
@@ -915,7 +1063,7 @@
       const m = document.createElement('div');
       m.className = 'cf-modal';
       m.innerHTML = `<div class="card cf-card" role="alertdialog" aria-modal="true" aria-labelledby="cf-t" aria-describedby="cf-b">
-        <h2 id="cf-t">${esc(title)}</h2><div id="cf-b" class="cf-b">${body}</div>
+        <h2 id="cf-t">${esc(title)}</h2><div id="cf-b" class="cf-b">${S.remote ? `<p class="cf-where">${icon('server')}<span>No servidor <b>${esc(S.remote.name)}</b>, pelo painel central.</span></p>` : ''}${body}</div>
         <div class="controls cf-actions"><button class="btn" type="button" data-cf="0">Cancelar</button>
         <button class="btn ${danger ? 'danger' : 'primary'}" type="button" data-cf="1">${esc(ok)}</button></div></div>`;
       document.body.append(scrim, m);
@@ -2249,10 +2397,21 @@
       </div>
       ${(r.top || []).length ? `<ul class="srv-alerts">${r.top.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>`
         : silent ? '' : `<div class="muted srv-none">${icon('ok')}Nenhum alerta.</div>`}
-      <div class="srv-foot"><span class="muted">${self ? `versão ${esc(r.version || '?')}` : `versão ${esc(r.version || '?')} · notícia ${ago(t.lastSeen)}`}</span>
-        ${!self && r.panelUrl ? `<a class="btn sm" href="${esc(r.panelUrl)}" target="_blank" rel="noopener noreferrer">${icon('ext')}Abrir painel</a>` : ''}</div>
+      <div class="srv-foot"><span class="muted">${self ? `versão ${esc(r.version || '?')}` : `versão ${esc(r.version || '?')} · notícia ${ago(t.lastSeen)}`}
+          ${!self ? ` · ${t.control ? 'controle total' : t.viewable ? 'dá para ver aqui' : 'não compartilha a tela'}` : ''}</span>
+        <span class="controls">${!self && t.viewable && !(S.remote && S.remote.id === t.id) ? `<button class="btn sm primary" type="button" data-act="pick-server" data-v="${esc(t.id)}">${icon('eye')}Ver aqui</button>` : ''}
+        ${self && S.remote ? `<button class="btn sm" type="button" data-act="pick-server" data-v="">${icon('eye')}Ver aqui</button>` : ''}
+        ${!self && r.panelUrl ? `<a class="btn sm" href="${esc(r.panelUrl)}" target="_blank" rel="noopener noreferrer">${icon('ext')}Abrir painel</a>` : ''}</span></div>
     </section>`;
   }
+  const SHARE_RISK = {
+    view: ['Deixar o painel central ver este servidor?', 'Mostrar no central',
+      '<p>Quem entra no painel central passa a ver, na tela de lá, a visão geral, as apps, a banda, o sistema e a limpeza deste servidor (só leitura).</p><p>Os logs e as ações continuam fechados até você liberar. Dá para desligar quando quiser; vale na hora.</p>'],
+    logs: ['Incluir os logs?', 'Incluir os logs',
+      '<p>Quem entra no painel central passa a ler os logs das apps deste servidor. <b>Log pode ter dado sensível</b> (tokens em URL, e-mails, erros com dados).</p>'],
+    control: ['Liberar o controle total?', 'Liberar o controle total',
+      '<p>Quem entra no painel central <b>com as permissões de lá</b> (Ações nas apps, Limpar o disco) passa a <b>pausar e retomar apps e limpar o disco deste servidor</b>, além de ver tudo, inclusive os logs.</p><p>Se o painel central for invadido, essas ações ficam expostas também aqui. Usuários, senhas, IA, WhatsApp e esta conexão continuam só neste painel. Cada ação fica registrada como "fulano (pelo painel central)".</p>'],
+  };
   const serversView = {
     mount(v) {
       v.innerHTML = `<div class="page"><div class="section-h"><div><h2>${icon('layers')} Servidores</h2>
@@ -2264,11 +2423,32 @@
       serversView.load();
     },
     update() { if (Date.now() - serversView.at > 15000) serversView.load(); },
+    // o que o painel central pode ver e fazer neste servidor
+    async share(input) {
+      const cl = S.flAdmin.client;
+      const next = { view: cl.shareView, logs: cl.shareLogs, control: cl.shareControl };
+      next[input.dataset.share] = input.checked;
+      if (!next.view) next.logs = next.control = false;
+      if (input.checked) {
+        const [title, ok, body] = SHARE_RISK[input.dataset.share];
+        if (!await confirmDialog({ title, ok, body, danger: input.dataset.share === 'control' })) { input.checked = false; return; }
+      }
+      try {
+        const j = await api('/api/fleet/share', { method: 'POST', body: JSON.stringify(next) });
+        S.flAdmin.client = j.client;
+        toast(j.client.shareControl ? 'O painel central tem controle total deste servidor.' : j.client.shareView
+          ? `O painel central pode ver este servidor${j.client.shareLogs ? ', com os logs' : ''}.` : 'O painel central não vê mais este servidor.');
+      } catch (ex) { if (ex.message !== 'login') toast(ex.message); }
+      serversView.load();
+    },
     async load() {
       serversView.at = Date.now();
       try {
         const j = await api('/api/fleet/servers');
         S.fl = j;
+        S.fleet = j; // o cabeçalho e a Visão geral usam a mesma lista
+        S.fleetAt = Date.now();
+        renderPill();
         if (can.admin()) S.flAdmin = await api('/api/fleet');
         serversView.render();
       } catch (e) {
@@ -2321,6 +2501,16 @@
               <small>${cl.canWhatsApp ? 'O que avisar e os horários continuam na aba Notificações daqui; os destinos são os do central.'
                 : 'O token deste servidor não pode usar o WhatsApp do central. Para isso, gere outro lá com essa opção marcada e conecte de novo.'}</small></span></label>
             ${cl.useWhatsApp && !cl.centralWhatsApp ? `<div class="form-err">O WhatsApp do central não está pronto (desconectado, notificações desligadas ou sem destinos): os avisos daqui não saem por ele até resolver lá.</div>` : ''}
+            <div class="fl-share"><h3>${icon('eye')}O que o painel central pode ver e fazer aqui</h3>
+              <label class="perm"><input type="checkbox" class="sw" data-share="view" ${cl.shareView ? 'checked' : ''}>
+                <span><b>Deixar o central ver este servidor</b><small>Visão geral, apps, banda, sistema e limpeza, na tela do central, só leitura.
+                  ${cl.shareView ? (cl.listening ? 'Conectado agora.' : 'Conectando…') : ''}</small></span></label>
+              <label class="perm${cl.shareView ? '' : ' locked'}"><input type="checkbox" class="sw" data-share="logs" ${cl.shareLogs ? 'checked' : ''} ${cl.shareView && !cl.shareControl ? '' : 'disabled'}>
+                <span><b>Incluir os logs</b><small>O que as apps escrevem no log (pode ter dado sensível).</small></span></label>
+              <label class="perm${cl.shareView ? '' : ' locked'}"><input type="checkbox" class="sw" data-share="control" ${cl.shareControl ? 'checked' : ''} ${cl.shareView ? '' : 'disabled'}>
+                <span><b>Controle total</b><small>Quem tem as permissões no central também pausa/retoma apps e limpa o disco daqui (inclui os logs).
+                  Usuários, senhas, IA, WhatsApp e esta conexão continuam só aqui.</small></span></label>
+            </div>
             <div class="controls"><button class="btn" type="button" data-fl="disconnect">Desconectar</button></div>`
           : `<p class="muted fl-hint">Para ver este servidor no painel central de outro servidor: gere um token lá (Servidores → Gerar token) e cole aqui.
               Este painel passa a mandar um resumo por minuto (CPU, memória, disco, apps, alertas e banda). O central não consegue mexer em nada aqui.</p>
@@ -2360,6 +2550,7 @@
         btn.disabled = false;
       });
       body.addEventListener('change', async (e) => {
+        if (e.target.dataset.share) { serversView.share(e.target); return; }
         if (e.target.id !== 'fl-usewa') return;
         const on = e.target.checked;
         if (on && !await confirmDialog({ title: 'Mandar os avisos pelo WhatsApp do central?', ok: 'Usar o do central',
@@ -2645,6 +2836,8 @@
       if (a === 'logpick') { logsView.pick(v); return; }
       if (a === 'psort') { S.procSort = v; systemView.reload && systemView.reload(); return; }
       if (a === 'more') { openMore(); return; }
+      if (a === 'servers-menu') { openServersMenu(act); return; }
+      if (a === 'pick-server') { pickServer(v); return; }
       if (a === 'update') { location.reload(); return; }
       if (a === 'install') { closeDrawer(); closeInstallBar(); installApp(); return; }
       if (a === 'install-later') { closeInstallBar(); toast('Dá para instalar depois pelo menu Mais.'); return; }
@@ -2682,7 +2875,9 @@
   // ------------------------------------------------------------------ início
   async function start() {
     try { S.me = await api('/api/me'); } catch { return; }
+    try { await loadFleet(); } catch { return; }
     renderShell();
+    renderStrip();
     route();
     const t = S.me.twoFA || {};
     if (!t.enabled && !t.asked) setTimeout(recommend2FA, 1500);

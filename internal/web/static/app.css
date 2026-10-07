@@ -670,3 +670,53 @@ a.btn { text-decoration: none; color: inherit; }
 .ver-wrap:hover .ver-tip, .ver:focus + .ver-tip { opacity: 1; visibility: visible; }
 .ver-new { color: inherit; }
 .ver-new:hover { color: var(--accent); }
+
+/* ---------- trocar de servidor (painel central) ---------- */
+.srv-pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px 5px 9px; border-radius: 999px; border: 1px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); font: inherit; cursor: pointer; min-width: 0; max-width: 340px; }
+.srv-pill .i { flex: none; width: 16px; height: 16px; }
+.srv-pill-t { display: flex; flex-direction: column; min-width: 0; text-align: left; line-height: 1.15; }
+.srv-pill-t b { font-size: .86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srv-pill-t small { font-size: .68rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srv-pill:hover { border-color: var(--accent); }
+.srv-pill.remote { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); box-shadow: 0 0 0 3px var(--accent-soft); }
+.srv-pill.remote small { color: inherit; opacity: .85; }
+.remote-strip { background: var(--accent-soft); font-size: .82rem; border-top: 1px solid var(--border); }
+.remote-strip.err { background: var(--warning-soft); color: var(--warning-ink); }
+.remote-strip-in { max-width: 1320px; margin: 0 auto; padding: 6px 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.remote-strip-in > span { flex: 1; min-width: 0; }
+.remote-strip-in button { background: none; border: 0; padding: 2px 0; font: inherit; color: var(--accent); font-weight: 600; cursor: pointer; text-decoration: underline; }
+.scrim-clear { position: fixed; inset: 0; z-index: 59; background: transparent; }
+.srv-menu { position: fixed; z-index: 60; width: 340px; max-width: calc(100vw - 24px); background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 6px; }
+.srv-menu-h { font-size: .74rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 6px 10px 4px; }
+.srv-item { display: flex; width: 100%; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm); background: none; border: 0;
+  color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.srv-item:hover:not(:disabled), .srv-item:focus-visible { background: var(--surface-2); outline: none; }
+.srv-item.on { background: var(--accent-soft); }
+.srv-item:disabled { opacity: .55; cursor: not-allowed; }
+.srv-item-t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.srv-item-t b { font-size: .88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srv-item-t small { font-size: .74rem; color: var(--muted); }
+.srv-menu-foot { display: block; padding: 8px 10px 4px; font-size: .8rem; border-top: 1px solid var(--border); margin-top: 4px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--good); }
+.dot.warn { background: var(--warning); }
+.dot.crit { background: var(--critical); }
+.dot.off { background: var(--muted); }
+.srv-switch { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+.chip-srv { display: inline-flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface); color: inherit; font: inherit; cursor: pointer; flex: none; text-align: left; }
+.chip-srv span { display: flex; flex-direction: column; line-height: 1.2; }
+.chip-srv b { font-size: .86rem; }
+.chip-srv small { color: var(--muted); font-size: .72rem; }
+.chip-srv.on { border-color: var(--accent); background: var(--accent-soft); }
+.chip-srv:disabled { opacity: .55; cursor: not-allowed; }
+.cf-where { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); font-size: .84rem; }
+.cf-where .i { flex: none; }
+@media (max-width: 720px) {
+  .bar.has-pill .brand-txt { display: none; }
+  .srv-pill { max-width: 62vw; }
+}
+.fl-share { display: grid; gap: 10px; margin: 14px 0; padding-top: 12px; border-top: 1px solid var(--border); }
+.fl-share h3 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: .92rem; }
+.srv-foot .controls { display: flex; gap: 6px; flex-wrap: wrap; }
