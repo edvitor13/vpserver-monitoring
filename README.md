@@ -44,6 +44,7 @@ aplicações (cada projeto do Docker Compose vira uma app).
 - [Notificações pelo WhatsApp](#notificações-pelo-whatsapp)
 - [Vários servidores](#vários-servidores)
 - [Pausar e retomar uma aplicação](#pausar-e-retomar-uma-aplicação)
+- [Limpeza do disco](#limpeza-do-disco)
 - [Usuários e permissões](#usuários-e-permissões)
 - [Verificação em duas etapas](#verificação-em-duas-etapas)
 - [No celular](#no-celular)
@@ -365,25 +366,63 @@ tudo que recebe e só aceita links `http(s)` no "Abrir painel".
 
 ---
 
+## Limpeza do disco
+
+A aba **Limpeza** mostra quanto o disco ocupa e quanto dá para liberar **sem afetar as
+aplicações**, e limpa com confirmação. Ver é para todos; limpar e configurar a limpeza
+automática exigem a permissão **Limpar o disco** (ou ser administrador).
+
+| O que | Como | O que acontece (a tela avisa antes de confirmar) |
+|---|---|---|
+| **Cache de build do Docker** | `docker builder prune -a` (só o que nenhum build está usando) | O próximo build de cada app demora mais (o cache é refeito). Nada que está rodando muda |
+| **Imagens sem nome** (`<none>`) | `docker image prune` (sem `-a`): só imagens sem nome que nenhum contêiner usa, nem parado | Não dá mais para voltar a essas versões antigas sem baixar ou buildar de novo |
+| **Logs dos contêineres** (você escolhe as apps) | o log atual é zerado e os rotacionados (`.1`, `.2`...) apagados | O histórico de logs some; o que a app escrever depois continua sendo guardado |
+
+**Nunca é limpo:** volumes (os dados das apps), contêineres (nem parados ou pausados), imagens
+com nome ou em uso, redes, e nada fora do Docker. A limpeza vale para o **servidor todo** (o
+Docker é um só), inclusive apps que não são deste painel, e a tela diz isso.
+
+**Limpeza automática** (desligada por padrão): quando o disco passar de X% (padrão **85%**),
+o painel limpa sozinho o que estiver marcado (padrão: cache de build e imagens sem nome;
+logs acima de N MB por contêiner é opcional), **no máximo uma vez a cada 6 h**. Ligar pede
+confirmação com as consequências.
+
+**Registro e aviso:** toda limpeza (pela tela ou automática) fica no **histórico** (quem, o
+quê, quanto liberou, disco antes e depois, erros) e avisa pelo WhatsApp (tipo **Limpeza do
+disco** em Notificações, ligado por padrão).
+
+**Como o painel limpa sem ganhar poder demais:** o cache e as imagens vão pelo proxy do
+Docker, que passou a aceitar **só** esses dois `POST` além de pausar/retomar. Os logs ficam em
+`/var/lib/docker/containers`, que o painel não alcança: ele deixa um pedido (IDs dos
+contêineres) numa pasta dividida com o **`vpserver-cleaner`**, um busybox **sem rede**, sem
+capability e com o sistema só leitura, que aceita só IDs de 64 caracteres hexadecimais e só
+mexe nos arquivos `*-json.log*` (nunca nas configurações ao lado).
+
+---
+
 ## Usuários e permissões
 
 Dá para cadastrar **outras pessoas**, cada uma com o próprio login. O **primeiro
 administrador** é o do `.env` (`VPMON_USER`, ou `admin` na instalação nova).
 
-| | Ver tudo (dados, logs, chat com a IA) | Pausar/retomar apps | Criar e gerenciar usuários | IA e WhatsApp |
-|---|---|---|---|---|
-| **Administrador** | ✓ | ✓ | ✓ (inclusive administradores) | ✓ |
-| **Ações nas apps** | ✓ | ✓ | | |
-| **Gerencia usuários** | ✓ | | ✓ (só não-administradores, com no máximo as próprias permissões) | |
-| **Só leitura** (nenhuma marcada) | ✓ | | | |
+| | Ver tudo (dados, logs, chat com a IA) | Pausar/retomar apps | Limpar o disco | Criar e gerenciar usuários | IA e WhatsApp |
+|---|---|---|---|---|---|
+| **Administrador** | ✓ | ✓ | ✓ | ✓ (inclusive administradores) | ✓ |
+| **Ações nas apps** | ✓ | ✓ | | | |
+| **Limpar o disco** | ✓ | | ✓ | | |
+| **Gerencia usuários** | ✓ | | | ✓ (só não-administradores, com no máximo as próprias permissões) | |
+| **Só leitura** (nenhuma marcada) | ✓ | | | | |
 
-- **Cadastrar:** Configurações → **Usuários** → *Novo usuário* (nome e permissões). O painel
+As permissões se somam (ex.: ações nas apps + limpar o disco).
+
+- **Cadastrar:** aba **Usuários** → *Novo usuário* (nome e permissões). O painel
   gera uma **senha provisória**, mostrada uma vez: passe para a pessoa, que cria a dela no
   primeiro acesso.
 - **Depois:** mudar permissões, gerar nova senha provisória ou remover. Trocar a senha ou
   as permissões de alguém **derruba as sessões só dessa pessoa**. Ninguém mexe em si mesmo
   por ali (a própria senha fica em *Minha conta*) e sempre sobra um administrador.
-- **Na tela**, cada um vê só o que pode: o botão Pausar aparece para quem tem ações, a aba
+- **Na tela**, cada um vê só o que pode: o botão Pausar aparece para quem tem ações, os
+  botões da aba Limpeza para quem pode limpar, a aba Usuários para quem gerencia, a aba
   Notificações e as configurações de IA e WhatsApp só para administradores. **A API recusa
   do mesmo jeito** (403), mesmo que alguém chame direto.
 - **Avisos:** com "Segurança do painel" ligado nas Notificações, criar, remover, gerar senha
@@ -412,7 +451,7 @@ Authenticator, Authy, 1Password, Aegis...). Se alguém descobrir a senha, ainda 
   código naquele navegador. Perdeu o celular? Entre com um **código de recuperação** (cada
   um vale uma vez; o painel avisa quantos sobram e dá para gerar novos em Minha conta).
 - **Desligar:** Minha conta pede a senha e um código. Para quem perdeu o celular e os
-  códigos: um administrador desliga em Configurações → Usuários → *Desligar 2FA*, ou o
+  códigos: um administrador desliga na aba Usuários → *Desligar 2FA*, ou o
   `reset-password` (ver "Esqueci a senha").
 - **Segurança:** o mesmo código não vale duas vezes, códigos errados entram no freio de
   tentativas do login e ligar ou desligar derruba as outras sessões da pessoa. Com
@@ -484,10 +523,13 @@ Atualizar** quando você está usando. A versão aparece em Configurações.
 │  rede vpserver-docker (interna)      │  • serve a página e a API JSON            │  │
 │   ┌──────────────────────┐   GET     └──────────────────────────────────────────┘  │
 │   │ vpserver-dockerproxy │ ◄──────── listar contêineres, logs, eventos, info, df   │
-│   │ (só leitura)         │ ──► /var/run/docker.sock                                │
+│   │ (lista fechada)      │ ──► /var/run/docker.sock  (+ pausar e 2 limpezas)       │
 │   └──────────────────────┘                                                          │
 │   ┌──────────────────────┐  volume "sizes" (só o tamanho dos logs) ──► painel lê   │
 │   │ vpserver-sizer       │ ◄── /var/lib/docker/containers (só leitura, sem rede)   │
+│   └──────────────────────┘                                                          │
+│   ┌──────────────────────┐  volume "cleanreq" (pedidos de limpeza) ◄── painel      │
+│   │ vpserver-cleaner     │ ──► zera *-json.log quando pedido (sem rede)            │
 │   └──────────────────────┘                                                          │
 │  rede vpserver-whatsapp (opcional)                                                 │
 │   ┌──────────────────────┐   ┌─────────────────────┐                                │
@@ -497,7 +539,7 @@ Atualizar** quando você está usando. A versão aparece em Configurações.
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**O painel são quatro contêineres, uns 45 MB de RAM no total e ~0,1% de CPU** (mais os
+**O painel são cinco contêineres, uns 46 MB de RAM no total e ~0,1% de CPU** (mais os
 dois do WhatsApp, se ligado):
 
 - **`vpserver-monitor`**: um binário Go estático (sem dependências externas)
@@ -506,14 +548,19 @@ dois do WhatsApp, se ligado):
   o único que toca o socket do Docker. Só deixa passar `GET` em `_ping`,
   `version`, `info`, `system/df`, `events`, `containers/json` e
   `containers/<id>/logs`, e `POST` em `containers/<id>/pause` e `unpause` (o botão
-  Pausar/Retomar). Nada de criar, parar, apagar, `exec` ou `inspect`, que
-  mostraria as variáveis de ambiente (senhas) dos outros contêineres.
+  Pausar/Retomar), `build/prune` e `images/prune` (a aba Limpeza). Nada de criar,
+  parar, apagar contêiner ou volume, `exec` ou `inspect`, que mostraria as variáveis
+  de ambiente (senhas) dos outros contêineres.
 - **`vpserver-sizer`** (busybox, 1 MB): a cada 5 min anota **só o tamanho** dos
   arquivos de log do Docker (`*-json.log`) num volume que o painel lê. Existe
   porque a API do Docker não informa o tamanho dos logs, e o painel não pode ler
   `/var/lib/docker/containers`, onde também ficam as configurações (com senhas)
   dos contêineres. Ele roda sem rede, sem nenhuma capability e com o sistema de
   arquivos só leitura.
+- **`vpserver-cleaner`** (busybox, 1 MB): zera logs do Docker **quando a aba Limpeza
+  pede** (por um arquivo num volume dividido com o painel, com os IDs dos contêineres).
+  Aceita só IDs de 64 hexadecimais, só mexe em `*-json.log*` e nunca nas configurações
+  ao lado. Sem rede, sem capability, sistema só leitura.
 - **`vpserver-tunnel`** (cloudflared): o túnel próprio do painel.
 - **`vpserver-whatsapp`** e **`vpserver-whatsapp-db`** (opcionais, `COMPOSE_PROFILES=whatsapp`):
   Evolution API v2.3.7 e o Postgres dela, para as notificações. A Evolution não guarda
@@ -730,8 +777,14 @@ requisição; requisição sem resposta cai em 100 s.
   mas não consegue mexer em nenhum. Nunca lê a linha de comando nem o
   ambiente dos processos.
 - **Docker só pelo proxy** (lista acima). Nem com o painel comprometido daria
-  para criar, parar, apagar ou entrar em contêiner, nem ler o ambiente dos outros;
-  o máximo é pausar/retomar (o que o botão faz), e o próprio painel nunca.
+  para criar, parar, apagar ou entrar em contêiner, apagar volume, nem ler o ambiente
+  dos outros. O máximo é pausar/retomar (o próprio painel nunca) e as limpezas da aba
+  Limpeza: cache de build e imagens que nenhum contêiner usa (o pior caso seria perder
+  imagens antigas para rollback, nunca uma app no ar ou dados) e logs do Docker.
+- **Limpeza:** exige a permissão **Limpar o disco**, confirmação na tela (`confirm: true`
+  na API), uma por vez, e fica no histórico e no WhatsApp. O `vpserver-cleaner` tem acesso
+  de escrita à pasta dos contêineres, por isso não tem rede nem entrada além dos IDs
+  validados.
 - **WhatsApp:** a Evolution só existe na rede interna, com uma chave aleatória
   (`VPMON_WA_KEY`) que só o painel conhece; o banco dela fica numa rede sem saída.
   A tela nunca vê a chave. Nos logs, senha em URL (`postgresql://user:senha@…`) aparece
@@ -751,12 +804,15 @@ O painel foi feito para rodar **ao lado** de apps em produção sem encostar nel
 
 - tudo fica em **`/opt/vpserver-monitoring`**; nada fora disso é editado;
 - projeto Compose **`vpserver-monitoring`**; contêineres `vpserver-*`; redes
-  `vpserver-edge` e `vpserver-docker`; volume `vpserver-monitoring_sizes`. Não
-  entra na rede de ninguém;
+  `vpserver-edge` e `vpserver-docker`; volumes `vpserver-monitoring_sizes` e
+  `vpserver-monitoring_cleanreq`. Não entra na rede de ninguém;
 - **não publica porta** (80/443 continuam livres para o seu proxy);
 - túnel da Cloudflare **próprio**;
 - `cpu_shares: 128` e limites de CPU/RAM: se disputar recurso, o painel perde;
-- nunca roda `prune` global, `down -v` ou comando em outro projeto.
+- sozinho, nunca roda `prune`, `down -v` ou comando em outro projeto. A aba **Limpeza**
+  só apaga o que é seguro (cache de build fora de uso, imagens sem nome e sem uso, logs
+  escolhidos), e só quando alguém com permissão confirma ou quando você liga a limpeza
+  automática.
 
 ---
 
@@ -907,7 +963,8 @@ validada para daltonismo nos dois temas. Status sempre com ícone + texto.
 `/api/system`, `/api/me` (usuário e permissões); `POST /api/login`, `/api/logout`, `/api/password`,
 `/api/login/2fa` (segundo passo), `/api/2fa/setup|enable|disable|recovery|dismiss` (o próprio 2FA),
 `/api/apps/pause` (ações); `GET/POST /api/users`, `POST /api/users/update|reset|delete|2fa-off`
-(gestão de usuários); `/api/settings*` e `/api/notify*` (administradores); `GET /api/fleet/servers`
+(gestão de usuários); `GET /api/cleanup`, `POST /api/cleanup/run|auto` (limpeza; o `run` exige
+`"confirm": true`); `/api/settings*` e `/api/notify*` (administradores); `GET /api/fleet/servers`
 (cards da aba Servidores), `GET /api/fleet`, `POST /api/fleet/tokens|tokens/revoke|connect|disconnect|whatsapp`
 (administradores). Entre painéis, sem cookie e com `Authorization: Bearer vps_…`:
 `POST /api/fleet/report` (resumo por minuto), `/api/fleet/notify` (aviso pelo WhatsApp do central) e
@@ -930,6 +987,7 @@ internal/monitor/     coleta, agrupamento por app, alertas, limites, visões da 
 internal/ai/          cliente da DeepSeek (streaming + function calling) e o laço de ferramentas
 internal/notify/      notificações: cliente da Evolution (WhatsApp), alertas, resumos, análises da IA
 internal/fleet/       vários servidores: tokens e resumos no central, conexão e WhatsApp emprestado
+internal/cleanup/     limpeza do disco: cache de build, imagens sem nome, logs (via vpserver-cleaner), automática
 internal/web/         HTTP, login, troca de senha, chat (SSE), arquivos estáticos (static/)
 deploy/               compose.yml, env.example, receive.sh e on-server.sh (rodam no servidor)
 scripts/server.py     setup, deploy, logs, restart, rollback, password, ci-key

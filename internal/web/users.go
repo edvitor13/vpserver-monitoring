@@ -26,6 +26,7 @@ type User struct {
 	Admin      bool   `json:"admin,omitempty"`
 	Actions    bool   `json:"actions,omitempty"` // pausar/retomar aplicações
 	Manage     bool   `json:"manage,omitempty"`  // criar e gerenciar usuários
+	Clean      bool   `json:"clean,omitempty"`   // limpar o disco (tela Limpeza)
 	MustChange bool   `json:"mustChange,omitempty"`
 	Created    int64  `json:"created,omitempty"`
 	CreatedBy  string `json:"createdBy,omitempty"`
@@ -39,12 +40,14 @@ type User struct {
 
 func (u User) CanAct() bool    { return u.Admin || u.Actions }
 func (u User) CanManage() bool { return u.Admin || u.Manage }
+func (u User) CanClean() bool  { return u.Admin || u.Clean }
 
 // Perms são as permissões que dá para conceder.
 type Perms struct {
 	Admin   bool `json:"admin"`
 	Actions bool `json:"actions"`
 	Manage  bool `json:"manage"`
+	Clean   bool `json:"clean"`
 }
 
 // UserView é o que a tela vê de um usuário (sem hash nem epoch).
@@ -53,6 +56,7 @@ type UserView struct {
 	Admin      bool   `json:"admin"`
 	Actions    bool   `json:"actions"`
 	Manage     bool   `json:"manage"`
+	Clean      bool   `json:"clean"`
 	MustChange bool   `json:"mustChange"`
 	Created    int64  `json:"created"`
 	CreatedBy  string `json:"createdBy,omitempty"`
@@ -62,7 +66,7 @@ type UserView struct {
 }
 
 func (u User) View() UserView {
-	return UserView{Name: u.Name, Admin: u.Admin, Actions: u.CanAct(), Manage: u.CanManage(), MustChange: u.MustChange,
+	return UserView{Name: u.Name, Admin: u.Admin, Actions: u.CanAct(), Manage: u.CanManage(), Clean: u.CanClean(), MustChange: u.MustChange,
 		Created: u.Created, CreatedBy: u.CreatedBy, LastLogin: u.LastLogin, EnvPass: u.Hash == "", TwoFA: u.TOTP != nil}
 }
 
@@ -302,7 +306,7 @@ func (a *Auth) CreateUser(actor User, name string, p Perms) (UserView, string, e
 		if nameTaken(users, name, "") {
 			return nil, ErrUserExists
 		}
-		out = User{Name: name, Hash: hash, Admin: p.Admin, Actions: p.Actions, Manage: p.Manage, MustChange: true,
+		out = User{Name: name, Hash: hash, Admin: p.Admin, Actions: p.Actions, Manage: p.Manage, Clean: p.Clean, MustChange: true,
 			Created: time.Now().Unix(), CreatedBy: actor.Name, Epoch: randomEpoch()}
 		return append(users, out), nil
 	})
@@ -313,7 +317,7 @@ func allowedPerms(actor User, p Perms) error {
 	if actor.Admin {
 		return nil
 	}
-	if p.Admin || (p.Actions && !actor.CanAct()) || (p.Manage && !actor.CanManage()) {
+	if p.Admin || (p.Actions && !actor.CanAct()) || (p.Manage && !actor.CanManage()) || (p.Clean && !actor.CanClean()) {
 		return fmt.Errorf("%w: só dá para conceder as permissões que você tem", ErrForbidden)
 	}
 	return nil
@@ -351,7 +355,7 @@ func (a *Auth) UpdateUser(actor User, name string, p Perms) (UserView, error) {
 		if users[i].Admin && !p.Admin && countAdmins(users) <= 1 {
 			return nil, ErrLastAdmin
 		}
-		users[i].Admin, users[i].Actions, users[i].Manage, users[i].Epoch = p.Admin, p.Actions, p.Manage, randomEpoch()
+		users[i].Admin, users[i].Actions, users[i].Manage, users[i].Clean, users[i].Epoch = p.Admin, p.Actions, p.Manage, p.Clean, randomEpoch()
 		out = users[i]
 		return users, nil
 	})

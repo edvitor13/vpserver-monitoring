@@ -31,6 +31,7 @@ var Catalog = []Kind{
 	{"deploys", "mudancas", "Aplicação atualizada (deploy)", "Quando os contêineres de uma app voltam com outra imagem.", false, false},
 	{"security", "mudancas", "Segurança do painel", "Muitas senhas erradas no login, troca de senha, 2FA ligado/desligado, código de recuperação usado e mudanças de usuários.", true, false},
 	{"logins", "mudancas", "Cada entrada no painel", "Uma mensagem a cada login, com o IP.", false, false},
+	{"cleanup", "mudancas", "Limpeza do disco", "Quando o painel limpa o disco sozinho (passou do limite da limpeza automática) ou alguém limpa pela tela: o que saiu e quanto liberou.", true, false},
 	{"pauses", "mudancas", "App pausada ou retomada pela tela", "Um registro de quem usou o botão Pausar/Retomar (com o IP). Pausar nunca vira alerta.", false, false},
 
 	{"daily", "resumos", "Resumo diário", "Como foi ontem: CPU, memória, disco, banda, apps que mais consumiram e quedas.", true, false},

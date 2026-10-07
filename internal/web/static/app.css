@@ -622,3 +622,36 @@ a.btn { text-decoration: none; color: inherit; }
 .fl-hint code, .passbox code { overflow-wrap: anywhere; }
 .fl-st { display: grid; gap: 4px; margin-bottom: 12px; font-size: .88rem; }
 .fl-st .muted { font-size: .8rem; overflow-wrap: anywhere; }
+
+/* ---------- limpeza do disco ---------- */
+#cl-body { display: grid; gap: 16px; }
+.cl-items { display: grid; gap: 10px; }
+.cl-item { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; min-width: 0; }
+.cl-item.on { border-color: var(--accent); background: var(--accent-soft); }
+.cl-head { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.cl-t { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.cl-size { white-space: nowrap; }
+.cl-d { margin: 6px 0 0; font-size: .82rem; }
+.cl-cons { display: flex; gap: 6px; align-items: flex-start; margin: 6px 0 0; font-size: .82rem; color: var(--warning-ink); }
+.cl-cons .i { flex: none; margin-top: 2px; }
+.cl-why { margin: 6px 0 0; font-size: .8rem; font-style: italic; }
+.cl-apps { display: grid; gap: 4px; margin-top: 10px; }
+.cl-app { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--surface-2); font-size: .84rem; cursor: pointer; }
+.cl-app-n { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cl-app-n small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-go { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.cl-inline { display: flex; align-items: center; gap: 6px; }
+.cl-inline .input { width: 90px; }
+.cl-checks { display: grid; gap: 8px; font-size: .86rem; }
+.cl-checks label { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cl-mb { width: 90px; padding: 4px 8px; }
+.cl-never { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .86rem; }
+.cl-steps { display: grid; gap: 4px; padding: 8px 0 4px; font-size: .84rem; }
+.cl-steps p { margin: 0; }
+.cl-confirm { padding-left: 18px; display: grid; gap: 6px; }
+
+/* ---------- usuários ---------- */
+.us-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (min-width: 960px) { .us-grid { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); } }
+.us-grid .ulist { margin-bottom: 0; }
+.us-h { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.05rem; }

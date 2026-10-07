@@ -155,6 +155,8 @@ type Monitor struct {
 	df         docker.DiskUsage
 	cloud      Cloud // VM da Oracle (vazio fora dela)
 	stor       storage
+	logSizes   map[string]uint64 // log do Docker por ID de contêiner (do vpserver-sizer)
+	logsOK     bool
 	procList   []procs.Proc
 	lastView   time.Time // última vez que alguém abriu a aba Sistema
 	started    time.Time

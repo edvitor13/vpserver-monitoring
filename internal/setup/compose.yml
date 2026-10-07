@@ -62,6 +62,7 @@ services:
       - ./data:/data
       - /sys/fs/cgroup:/host/cgroup:ro
       - sizes:/sizes:ro
+      - cleanreq:/clean # pedidos de limpeza de log para o vpserver-cleaner
     networks: [edge, docker, whatsapp]
     depends_on: [dockerproxy]
     healthcheck:
@@ -89,12 +90,70 @@ services:
       - -allowfrom=vpserver-monitor
       - -allowGET=(/v1\.[0-9]+)?/(_ping|version|info|system/df|events|containers/json|containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/logs)
       - -allowHEAD=(/v1\.[0-9]+)?/_ping
-      # a única escrita: o botão Pausar/Retomar das apps (o painel recusa pausar a si mesmo)
-      - -allowPOST=(/v1\.[0-9]+)?/containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/(pause|unpause)
+      # as únicas escritas: Pausar/Retomar das apps (o painel recusa pausar a si mesmo) e
+      # as duas limpezas seguras da tela Limpeza (cache de build fora de uso e
+      # imagens sem nome; o Docker não apaga imagem que um contêiner usa)
+      - -allowPOST=(/v1\.[0-9]+)?/(containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/(pause|unpause)|build/prune|images/prune)
       - -shutdowngracetime=5
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [docker]
+    logging: *logging
+
+  cleaner:
+    # Zera logs do Docker quando o painel pede (tela Limpeza). O painel não
+    # alcança /var/lib/docker/containers: ele deixa em /req um arquivo "req-<n>"
+    # com IDs de contêiner, um por linha. Este ajudante (sem rede, sem
+    # capability, sistema só leitura) aceita só IDs de 64 hex, zera o log atual
+    # (<id>-json.log, que o Docker escreve em modo append) e apaga os
+    # rotacionados (.1, .2...). Não toca em mais nada da pasta (configs etc.).
+    image: busybox:1.37-musl
+    container_name: vpserver-cleaner
+    restart: unless-stopped
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16m
+    cpus: 0.1
+    cpu_shares: 64
+    command:
+      - sh
+      - -c
+      - |
+        R=/req L=/logs S=/sizes
+        chmod 0777 "$$R"
+        i=0
+        while :; do
+          [ $$((i % 10)) -eq 0 ] && touch "$$R/.alive"
+          i=$$((i + 1))
+          for r in "$$R"/req-*; do
+            [ -f "$$r" ] || continue
+            n="$${r##*/req-}"
+            case "$$n" in ""|*[!0-9a-f]*) rm -f "$$r"; continue;; esac
+            out="$$R/.res-$$n"
+            : > "$$out"
+            while read -r id; do
+              case "$$id" in ""|*[!0-9a-f]*) continue;; esac
+              [ "$${#id}" -eq 64 ] || continue
+              for f in "$$L/$$id/$$id-json.log"*; do
+                [ -f "$$f" ] && [ ! -L "$$f" ] || continue
+                echo "$$(stat -c %s "$$f") $$f" >> "$$out"
+                case "$$f" in *-json.log) : > "$$f";; *) rm -f "$$f";; esac
+              done
+            done < "$$r"
+            rm -f "$$r"
+            chmod 0644 "$$out"
+            mv "$$out" "$$R/res-$$n"
+            stat -c '%s %n' "$$L"/*/*-json.log* > "$$S/.tmp-cleaner" 2>/dev/null
+            mv "$$S/.tmp-cleaner" "$$S/logsizes.txt"
+          done
+          sleep 2
+        done
+    volumes:
+      - /var/lib/docker/containers:/logs
+      - cleanreq:/req
+      - sizes:/sizes
     logging: *logging
 
   sizer:
@@ -220,6 +279,8 @@ services:
 volumes:
   sizes:
     name: vpserver-monitoring_sizes
+  cleanreq:
+    name: vpserver-monitoring_cleanreq
   whatsapp-instances:
     name: vpserver-monitoring_whatsapp-instances
   whatsapp-db:

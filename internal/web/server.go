@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/edvitor13/vpserver-monitoring/internal/ai"
+	"github.com/edvitor13/vpserver-monitoring/internal/cleanup"
 	"github.com/edvitor13/vpserver-monitoring/internal/fleet"
 	"github.com/edvitor13/vpserver-monitoring/internal/monitor"
 	"github.com/edvitor13/vpserver-monitoring/internal/notify"
@@ -35,12 +36,13 @@ type Server struct {
 	assets    map[string]asset
 	ai        *aiState // IA: configurada pela tela ou pelo .env (DEEPSEEK_*)
 	chatLimit chatLimiter
-	nt        *notify.Service // notificações pelo WhatsApp (nil = sem)
-	version   string          // versão do painel: vai no index.html e no X-VPMon-Version
-	fl        *fleet.Fleet    // vários servidores: central e/ou conectado a um central (nil = sem)
-	sendLimit chatLimiter     // "enviar agora" da aba Notificações
-	pauseLim  chatLimiter     // pausar/retomar app
-	usersLim  chatLimiter     // criar/editar/remover usuários
+	nt        *notify.Service  // notificações pelo WhatsApp (nil = sem)
+	version   string           // versão do painel: vai no index.html e no X-VPMon-Version
+	fl        *fleet.Fleet     // vários servidores: central e/ou conectado a um central (nil = sem)
+	cl        *cleanup.Service // tela Limpeza (nil = sem)
+	sendLimit chatLimiter      // "enviar agora" da aba Notificações
+	pauseLim  chatLimiter      // pausar/retomar app
+	usersLim  chatLimiter      // criar/editar/remover usuários
 }
 
 type asset struct {
@@ -122,6 +124,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/fleet/servers", s.private(s.fleetServers))
 	// ações nas aplicações e gestão de usuários: por permissão
 	mux.HandleFunc("POST /api/apps/pause", s.private(need(User.CanAct, msgNoActions, s.pauseApp)))
+	mux.HandleFunc("GET /api/cleanup", s.private(s.cleanupGet))
+	mux.HandleFunc("POST /api/cleanup/run", s.private(need(User.CanClean, msgNoClean, s.cleanupRun)))
+	mux.HandleFunc("POST /api/cleanup/auto", s.private(need(User.CanClean, msgNoClean, s.cleanupAuto)))
 	manage := func(h http.HandlerFunc) http.HandlerFunc { return s.private(need(User.CanManage, msgNoManage, h)) }
 	mux.HandleFunc("GET /api/users", manage(s.usersList))
 	mux.HandleFunc("POST /api/users", manage(s.usersCreate))
@@ -381,7 +386,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	src, changed := s.auth.PasswordInfo(u)
 	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "passwordSource": src,
 		"passwordChanged": changed, "mustChange": u.MustChange,
-		"admin": u.Admin, "actions": u.CanAct(), "manage": u.CanManage(), "twoFA": u.TwoFA()})
+		"admin": u.Admin, "actions": u.CanAct(), "manage": u.CanManage(), "clean": u.CanClean(), "twoFA": u.TwoFA()})
 }
 
 // changePassword troca a senha (e, se pedido, o usuário) pela tela. Confere a

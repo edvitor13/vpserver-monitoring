@@ -1,6 +1,7 @@
-// Package docker fala com a API do Docker — sempre pelo proxy só-leitura
-// (vpserver-dockerproxy), que só deixa passar GET em poucos caminhos. O painel
-// nunca recebe o socket do Docker.
+// Package docker fala com a API do Docker — sempre pelo proxy
+// (vpserver-dockerproxy), que só deixa passar GET em poucos caminhos e, de
+// escrita, pausar/retomar contêiner e as duas limpezas seguras (cache de build e
+// imagens sem nome). O painel nunca recebe o socket do Docker.
 package docker
 
 import (
@@ -22,6 +23,7 @@ import (
 type Client struct {
 	base string
 	hc   *http.Client
+	slow *http.Client // limpezas: podem levar minutos (o prazo vem do contexto)
 }
 
 // New aceita "http://host:2375" ou "unix:///var/run/docker.sock" (para desenvolvimento).
@@ -35,7 +37,7 @@ func New(addr string) *Client {
 		}
 		base = "http://docker"
 	}
-	return &Client{base: base, hc: &http.Client{Transport: tr, Timeout: 30 * time.Second}}
+	return &Client{base: base, hc: &http.Client{Transport: tr, Timeout: 30 * time.Second}, slow: &http.Client{Transport: tr}}
 }
 
 func (c *Client) get(ctx context.Context, path string, q url.Values) (*http.Response, error) {
@@ -397,6 +399,7 @@ type Volume struct {
 type ImageUse struct {
 	ID         string   `json:"-"`
 	Tags       []string `json:"tags"`
+	Dangling   bool     `json:"dangling,omitempty"` // sem nome (<none>): sobra de build/atualização
 	Size       int64    `json:"size"`
 	Containers int64    `json:"containers"`
 }
@@ -419,6 +422,8 @@ type DiskUsage struct {
 	VolumesSize      int64           `json:"volumesSize"`
 	BuildCacheSize   int64           `json:"buildCacheSize"`
 	BuildCacheUnused int64           `json:"buildCacheUnused"`
+	DanglingSize     int64           `json:"danglingSize"` // imagens sem nome que nenhum contêiner usa
+	DanglingCount    int             `json:"danglingCount"`
 	Volumes          []Volume        `json:"volumes"`
 	Images           []ImageUse      `json:"images"`
 	Containers       []ContainerDisk `json:"-"`
@@ -471,10 +476,15 @@ func (c *Client) DiskUsage(ctx context.Context) (DiskUsage, error) {
 			du.ImagesUnused += im.Size - max(0, im.SharedSize)
 		}
 		tags := im.RepoTags
-		if len(tags) == 0 {
+		dangling := isDangling(tags)
+		if dangling {
 			tags = []string{"<sem nome>"}
+			if im.Containers == 0 {
+				du.DanglingSize += im.Size - max(0, im.SharedSize)
+				du.DanglingCount++
+			}
 		}
-		du.Images = append(du.Images, ImageUse{ID: im.ID, Tags: tags, Size: im.Size, Containers: im.Containers})
+		du.Images = append(du.Images, ImageUse{ID: im.ID, Tags: tags, Dangling: dangling, Size: im.Size, Containers: im.Containers})
 	}
 	sort.Slice(du.Images, func(i, j int) bool { return du.Images[i].Size > du.Images[j].Size })
 	for _, ct := range raw.Containers {
@@ -540,4 +550,72 @@ func (c *Client) Pause(ctx context.Context, id string, pause bool) error {
 		return fmt.Errorf("docker %s: %d %s", action, resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	return nil
+}
+
+// isDangling: imagem sem nome (o Docker devolve sem tags ou com "<none>:<none>").
+func isDangling(tags []string) bool {
+	for _, t := range tags {
+		if t != "<none>:<none>" && t != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// Pruned é o resultado de uma limpeza.
+type Pruned struct {
+	Freed   int64 // bytes liberados (o que o Docker diz)
+	Removed int   // itens apagados (caches ou imagens)
+}
+
+func (c *Client) post(ctx context.Context, path string, q url.Values, v any) error {
+	u := c.base + path
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.slow.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("docker %s: %d %s", path, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(v)
+}
+
+// PruneBuildCache apaga o cache de build que não está em uso (o mesmo que
+// "docker builder prune -a"). Não mexe em imagem, contêiner nem volume: o
+// próximo build só demora mais.
+func (c *Client) PruneBuildCache(ctx context.Context) (Pruned, error) {
+	var r struct {
+		CachesDeleted  []string `json:"CachesDeleted"`
+		SpaceReclaimed int64    `json:"SpaceReclaimed"`
+	}
+	err := c.post(ctx, "/build/prune", url.Values{"all": {"1"}}, &r)
+	return Pruned{Freed: r.SpaceReclaimed, Removed: len(r.CachesDeleted)}, err
+}
+
+// PruneDanglingImages apaga só as imagens sem nome ("docker image prune",
+// sem -a). O Docker nunca apaga imagem que algum contêiner usa, nem parado.
+func (c *Client) PruneDanglingImages(ctx context.Context) (Pruned, error) {
+	var r struct {
+		ImagesDeleted []struct {
+			Deleted string `json:"Deleted"`
+		} `json:"ImagesDeleted"`
+		SpaceReclaimed int64 `json:"SpaceReclaimed"`
+	}
+	err := c.post(ctx, "/images/prune", url.Values{"filters": {`{"dangling":["true"]}`}}, &r)
+	n := 0
+	for _, d := range r.ImagesDeleted {
+		if d.Deleted != "" {
+			n++
+		}
+	}
+	return Pruned{Freed: r.SpaceReclaimed, Removed: n}, err
 }
