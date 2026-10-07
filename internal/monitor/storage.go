@@ -168,11 +168,15 @@ func (m *Monitor) computeStorage(du docker.DiskUsage, logs map[string]uint64, lo
 	return st
 }
 
+// RefreshStorage relê os tamanhos de log (depois de zerar logs).
+func (m *Monitor) RefreshStorage() { m.refreshStorage() }
+
 // refreshStorage relê os tamanhos de log e refaz a divisão com a última medição do Docker.
 func (m *Monitor) refreshStorage() {
 	logs, ok := readLogSizes(m.cfg.LogSizes)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.logSizes, m.logsOK = logs, ok
 	m.stor = m.computeStorage(m.df, logs, ok, m.hostNow.FSUsed)
 }
 
