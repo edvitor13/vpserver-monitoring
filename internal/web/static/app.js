@@ -137,11 +137,41 @@
   }
   const swatch = (color) => `<i class="swatch" style="background:${esc(color)}"></i>`;
 
+  // ------------------------------------------------------------------ versão (tela aberta há tempos x painel atualizado)
+  const APP_VERSION = (document.querySelector('meta[name="vpmon-version"]') || {}).content || '';
+  let newVersion = '';
+  // o servidor manda a versão dele em toda resposta; se a tela é de outra, ela
+  // se atualiza: sozinha quando não há sessão (login), com aviso dentro do painel
+  function checkVersion(server, status) {
+    if (!server || !APP_VERSION || server === APP_VERSION || newVersion === server) return;
+    newVersion = server;
+    let tried = '';
+    try { tried = sessionStorage.getItem('vpmon-reloaded-for') || ''; } catch { /* sem storage */ }
+    if ((!S.me || status === 401) && tried !== server) { // nada a perder: recarrega (uma vez por versão)
+      try { sessionStorage.setItem('vpmon-reloaded-for', server); } catch { /* sem storage */ }
+      location.reload();
+      return;
+    }
+    if (!$('.update-bar')) {
+      const bar = document.createElement('div');
+      bar.className = 'update-bar';
+      bar.setAttribute('role', 'status');
+      bar.innerHTML = `<span>${icon('refresh')}Nova versão do painel disponível.</span><button class="btn sm primary" type="button" data-act="update">Atualizar</button>`;
+      document.body.append(bar);
+    }
+  }
+
+  // fora do painel (login) a página não chama a API sozinha: confere a versão no /healthz
+  function pingVersion() {
+    fetch('/healthz', { cache: 'no-store' }).then((r) => checkVersion(r.headers.get('X-VPMon-Version'), 0)).catch(() => {});
+  }
+
   // ------------------------------------------------------------------ API
   async function api(path, opts = {}) {
     const headers = { 'X-Requested-With': 'vpmon' };
     if (opts.body) headers['Content-Type'] = 'application/json';
     const r = await fetch(path, { credentials: 'same-origin', ...opts, headers });
+    checkVersion(r.headers.get('X-VPMon-Version'), r.status);
     const j = await r.json().catch(() => ({}));
     if (r.status === 401 && !path.startsWith('/api/login')) {
       showLogin();
@@ -283,6 +313,8 @@
     teardown();
     closeDrawer();
     S.ov = null;
+    S.me = null;
+    pingVersion();
     clearTimeout(pollT);
     $('#app').innerHTML = `
       <div class="login"><div class="card login-card">
@@ -607,7 +639,11 @@
     }
     pollT = setTimeout(poll, 5000);
   }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && $('#view')) poll(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if ($('#view')) poll(); // painel: a própria consulta traz a versão
+    else pingVersion(); // login e primeiro acesso
+  });
 
   // ------------------------------------------------------------------ peças comuns
   function kpi(ic, label, value, sub, meter) {
@@ -1147,7 +1183,7 @@
     m.className = 'modal';
     m.innerHTML = `<div class="card login-card settings-card" role="dialog" aria-modal="true" aria-labelledby="st-t">
       <div class="card-h"><div><h2 id="st-t">${icon('gear')}Configurações</h2>
-        <div class="muted st-who">${icon('user')}${esc(me.user)} · ${esc(roleText(me))}</div></div>
+        <div class="muted st-who">${icon('user')}${esc(me.user)} · ${esc(roleText(me))} · versão ${esc(APP_VERSION || '?')}</div></div>
         <button class="icon-btn" type="button" data-act="close" aria-label="Fechar">${icon('x')}</button></div>
       ${tabs.length > 1 ? `<div class="seg" role="tablist" style="margin-bottom:14px">
         ${tabs.map(([k, l]) => `<button type="button" data-act="stab" data-v="${k}" aria-pressed="${tab === k}">${l}</button>`).join('')}</div>` : ''}
@@ -2121,6 +2157,7 @@
       if (a === 'logpick') { logsView.pick(v); return; }
       if (a === 'psort') { S.procSort = v; systemView.reload && systemView.reload(); return; }
       if (a === 'more') { openMore(); return; }
+      if (a === 'update') { location.reload(); return; }
       if (a === 'pause') { togglePause(v, act.dataset.pause === '1'); return; }
       if (a === 'theme') {
         if (act.closest('.sheet')) closeDrawer();
