@@ -263,3 +263,29 @@ func TestAISettings(t *testing.T) {
 		t.Fatalf("remover (sem chave no .env, a IA desliga): %d %s", r.Code, r.Body)
 	}
 }
+
+// A versão vai no index.html (meta e ?v= nos arquivos) e em toda resposta.
+func TestVersionStamp(t *testing.T) {
+	h := New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil).Handler()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	body := rec.Body.String()
+	for _, want := range []string{`<meta name="vpmon-version" content="dev">`, `src="app.js?v=dev"`, `href="app.css?v=dev"`, `href="manifest.webmanifest?v=dev"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("index sem %q", want)
+		}
+	}
+	if rec.Header().Get("X-VPMon-Version") != "dev" {
+		t.Fatalf("cabeçalho da versão: %v", rec.Header())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/api/me", nil)) // até a recusa leva a versão
+	if rec.Code != 401 || rec.Header().Get("X-VPMon-Version") != "dev" {
+		t.Fatalf("API sem a versão: %d %v", rec.Code, rec.Header())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/app.js?v=dev", nil)) // o ?v= não muda o arquivo servido
+	if rec.Code != 200 {
+		t.Fatalf("app.js?v=: %d", rec.Code)
+	}
+}

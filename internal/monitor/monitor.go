@@ -225,6 +225,9 @@ func (m *Monitor) load() {
 }
 
 // Save grava o estado em disco.
+// Version é a versão do painel (o commit do build).
+func (m *Monitor) Version() string { return m.cfg.Version }
+
 func (m *Monitor) Save() {
 	m.mu.RLock()
 	err := m.st.Save(m.statePath())
