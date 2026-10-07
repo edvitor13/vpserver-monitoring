@@ -76,6 +76,10 @@ mesma entrega quando são do mesmo assunto; assunto novo ganha issue própria.
 - Pausar é escolha, não problema: contêiner pausado não vira alerta.
 - Testes que mexem em contêiner no servidor usam um contêiner descartável
   (`vpserver-pausetest`), nunca uma app de verdade.
+- **Vários servidores** (`internal/fleet`): quem chama é sempre o servidor
+  conectado; o central **nunca** chama nada nele. O que chega com token é dado de
+  fora: limite tamanho, não confie, e o WhatsApp emprestado só manda para os
+  destinos do central (nunca para números vindos do outro servidor).
 
 ## Comandos
 

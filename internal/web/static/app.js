@@ -100,6 +100,9 @@
     user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
     install: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
+    layers: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+    ext: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   };
   const icon = (n, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
   const STATUS = { ok: ['ok', 'OK'], warn: ['warn', 'Atenção'], crit: ['crit', 'Crítico'], info: ['info', 'Info'], off: ['pause', 'Parado'] };
@@ -561,7 +564,7 @@
 
   // ------------------------------------------------------------------ casca
   // [chave, nome, ícone, nome curto (celular)]
-  const TABS = [['overview', 'Visão geral', 'grid', 'Início'], ['infos', 'Infos', 'info', 'Infos'],
+  const TABS = [['overview', 'Visão geral', 'grid', 'Início'], ['servers', 'Servidores', 'layers', 'Servidores'], ['infos', 'Infos', 'info', 'Infos'],
     ['apps', 'Aplicações', 'box', 'Apps'], ['traffic', 'Banda', 'net', 'Banda'], ['logs', 'Logs', 'term', 'Logs'],
     ['system', 'Sistema', 'server', 'Sistema'], ['limits', 'Limites', 'load', 'Limites'],
     ['ai', 'IA', 'spark', 'IA'], ['notify', 'Notificações', 'bell', 'Avisos']]; // IA e WhatsApp juntas, no fim
@@ -2031,16 +2034,20 @@
         <input class="sw" type="checkbox" data-ev="${esc(k.key)}" ${c.events[k.key] && !locked(k) ? 'checked' : ''} ${locked(k) ? 'disabled' : ''}>
         <span class="opt-t">${esc(k.label)}</span><span class="opt-d">${esc(k.desc)}</span></label>`;
       const warnings = [];
-      if (n.installed && st.state !== 'open') warnings.push('O WhatsApp não está conectado: nada sai até conectar.');
-      if (!c.recipients.length) warnings.push('Ninguém em "Para quem enviar": nada sai até adicionar um número ou grupo.');
+      if (!n.relay && n.installed && st.state !== 'open') warnings.push('O WhatsApp não está conectado: nada sai até conectar.');
+      if (!n.relay && !c.recipients.length) warnings.push('Ninguém em "Para quem enviar": nada sai até adicionar um número ou grupo.');
       if (!c.enabled) warnings.push('As notificações estão desligadas.');
       if (n.pending && warnings.length) warnings.push(`${n.pending} alerta(s) esperando para sair.`);
       body.innerHTML = `<div class="page">
         ${warnings.length ? `<div class="alert warn slim"><div class="ic">${icon('warn')}</div><div class="alert-body"><div class="alert-t">${warnings.map(esc).join(' ')}</div></div></div>` : ''}
-        <div class="grid g2">
+        ${n.relay ? `<section class="card"><div class="card-h"><h2>${icon('link')}Pelo WhatsApp do painel central</h2>
+            <label class="sw-l"><input class="sw" type="checkbox" id="nt-on" ${c.enabled ? 'checked' : ''}><span>${c.enabled ? 'Ligadas' : 'Desligadas'}</span></label></div>
+          <p class="muted" style="margin:0">Os avisos deste servidor saem pelo WhatsApp do painel central <b>${esc(n.relay)}</b>, para os destinos de lá
+            (com o nome deste servidor no fim). Aqui você escolhe o que avisar e os horários. <a href="#/servers">Conexão com o central →</a></p></section>` : ''}
+        <div class="grid g2"${n.relay ? ' hidden' : ''}>
           <section class="card"><div class="card-h"><h2>${icon('whats')}Conexão</h2></div><div id="wa-box">${waBoxHTML(n)}</div></section>
           <section class="card"><div class="card-h"><h2>${icon('users')}Para quem enviar</h2>
-            <label class="sw-l"><input class="sw" type="checkbox" id="nt-on" ${c.enabled ? 'checked' : ''}><span>${c.enabled ? 'Ligadas' : 'Desligadas'}</span></label></div>
+            ${n.relay ? '' : `<label class="sw-l"><input class="sw" type="checkbox" id="nt-on" ${c.enabled ? 'checked' : ''}><span>${c.enabled ? 'Ligadas' : 'Desligadas'}</span></label>`}</div>
             <div id="nt-rcpts"></div>
             <form class="nt-add" id="nt-add" autocomplete="off">
               <div class="field"><label for="nt-name">Nome (opcional)</label><input class="input" id="nt-name" maxlength="40" placeholder="Ex.: Ana"></div>
@@ -2181,7 +2188,192 @@
     },
   };
 
-  const VIEWS = { overview, infos: infosView, ai: aiView, apps: appsView, traffic: trafficView, logs: logsView, system: systemView, limits: limitsView, notify: notifyView };
+  // ------------------------------------------------------------------ aba: servidores (painéis conectados)
+  const FL_WA = { own: 'WhatsApp próprio', central: 'WhatsApp do central', off: 'Sem WhatsApp' };
+  function srvMeter(label, p, text) {
+    return `<div class="srv-m"><div class="srv-m-h"><span>${label}</span><b class="num">${text}</b></div>
+      <div class="meter"><i class="${level(p, 75, 90)}" style="width:${Math.min(100, Math.max(0, p || 0)).toFixed(1)}%"></i></div></div>`;
+  }
+  // r = resumo do servidor (falta se ainda não conectou); t = token (falta = este painel)
+  function srvCard(r, t) {
+    const self = !t;
+    const name = self ? (r.name || 'Este servidor') : t.name;
+    if (!self && !r) {
+      return `<section class="card srv-card srv-wait"><div class="card-h"><h3>${icon('server')}${esc(name)}</h3>${badge('info', 'Aguardando conexão')}</div>
+        <p class="muted">O token foi gerado ${t.created ? `em ${dt(t.created)}` : ''}, mas o servidor ainda não mandou notícias. No painel dele:
+          <b>Servidores → Conectar a um painel central</b>, com o endereço deste painel e o token.</p></section>`;
+    }
+    const silent = !self && !t.online;
+    const health = silent ? badge('crit', 'Sem notícias')
+      : r.crit ? badge('crit', r.crit === 1 ? '1 urgente' : `${r.crit} urgentes`)
+        : r.warn ? badge('warn', r.warn === 1 ? '1 alerta' : `${r.warn} alertas`) : badge('ok', 'Tudo certo');
+    const sub = [!self && r.name && r.name !== name ? r.name : '', r.where, r.os, r.uptime ? `ligado há ${dur(r.uptime)}` : ''].filter(Boolean);
+    const egP = r.egressLimit ? (r.egressMonth / r.egressLimit) * 100 : 0;
+    return `<section class="card srv-card${silent ? ' srv-silent' : ''}${self ? ' srv-self' : ''}">
+      <div class="card-h"><div class="srv-n"><h3>${icon(self ? 'grid' : 'server')}${esc(name)}${self ? ' <span class="muted srv-tag">este painel</span>' : ''}</h3>
+        ${sub.length ? `<div class="muted srv-sub">${esc(sub.join(' · '))}</div>` : ''}</div>${health}</div>
+      ${silent ? `<div class="srv-down">${icon('crit')}<span>Sem notícias desde ${dt(t.lastSeen)} (${ago(t.lastSeen)}). Ele pode ter caído, perdido a internet ou ficado sem o painel.</span></div>` : ''}
+      <div class="srv-meters${silent ? ' srv-old' : ''}">
+        ${srvMeter('CPU', r.cpu, pct(r.cpu))}
+        ${srvMeter('Memória', r.memTotal ? (r.memUsed / r.memTotal) * 100 : 0, `${bytes(r.memUsed)} de ${bytes(r.memTotal)}`)}
+        ${srvMeter('Disco', r.diskTotal ? (r.diskUsed / r.diskTotal) * 100 : 0, `${bytes(r.diskUsed)} de ${bytes(r.diskTotal)}`)}
+      </div>
+      <div class="srv-facts">
+        <span>${icon('box')}${r.appsTotal ? `${r.appsUp} de ${r.appsTotal} apps no ar` : 'Nenhuma app'}</span>
+        <span title="Saída para a internet neste mês">${icon('up')}${data(r.egressMonth)} no mês${egP >= 75 ? ` (${pct(egP)} do limite)` : ''}</span>
+        <span>${icon('whats')}${FL_WA[r.whatsapp] || FL_WA.off}</span>
+      </div>
+      ${(r.top || []).length ? `<ul class="srv-alerts">${r.top.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>`
+        : silent ? '' : `<div class="muted srv-none">${icon('ok')}Nenhum alerta.</div>`}
+      <div class="srv-foot"><span class="muted">${self ? `versão ${esc(r.version || '?')}` : `versão ${esc(r.version || '?')} · notícia ${ago(t.lastSeen)}`}</span>
+        ${!self && r.panelUrl ? `<a class="btn sm" href="${esc(r.panelUrl)}" target="_blank" rel="noopener noreferrer">${icon('ext')}Abrir painel</a>` : ''}</div>
+    </section>`;
+  }
+  const serversView = {
+    mount(v) {
+      v.innerHTML = `<div class="page"><div class="section-h"><div><h2>${icon('layers')} Servidores</h2>
+        <p>Este painel e os servidores conectados a ele, num lugar só. Cada um manda um resumo por minuto; quem para de mandar vira alerta aqui.</p></div></div>
+        <div id="fl-body"><div class="loading"><div class="spinner"></div></div></div></div>`;
+      serversView.at = 0;
+      serversView.secret = '';
+      serversView.listen($('#fl-body'));
+      serversView.load();
+    },
+    update() { if (Date.now() - serversView.at > 15000) serversView.load(); },
+    async load() {
+      serversView.at = Date.now();
+      try {
+        const j = await api('/api/fleet/servers');
+        S.fl = j;
+        if (can.admin()) S.flAdmin = await api('/api/fleet');
+        serversView.render();
+      } catch (e) {
+        if (e.message !== 'login' && $('#fl-body')) $('#fl-body').innerHTML = `<div class="card empty">${esc(e.message)}</div>`;
+      }
+    },
+    render() {
+      const body = $('#fl-body');
+      if (!body || !S.fl) return;
+      if (body.contains(document.activeElement) && document.activeElement.matches('input')) return; // não apaga o que a pessoa digita
+      const j = S.fl, cl = j.client || {};
+      const others = j.servers || [];
+      const silent = others.filter((t) => t.lastSeen && !t.online).length;
+      body.innerHTML = `
+        ${cl.connected ? `<div class="alert ${cl.ok ? 'info' : 'warn'} slim"><div class="ic">${icon(cl.ok ? 'link' : 'warn')}</div><div class="alert-body"><div class="alert-t">
+          ${cl.ok ? `Este servidor manda notícias para o painel central <b>${esc(cl.central || cl.url)}</b>.` : `Este servidor não conseguiu falar com o painel central: ${esc(cl.error || 'sem resposta')}.`}
+          <a href="${esc(cl.url)}" target="_blank" rel="noopener noreferrer">Abrir o central</a></div></div></div>` : ''}
+        ${others.length ? `<p class="muted fl-count">${others.length} servidor(es) conectado(s) a este painel${silent ? ` · <b class="crit-t">${silent} sem notícias</b>` : ''}.</p>` : ''}
+        <div class="srv-grid">${srvCard(j.self)}${others.map((t) => srvCard(t.report, t)).join('')}</div>
+        ${!others.length && !cl.connected ? `<div class="note"><b>Tem outros servidores com o VPServer?</b> Conecte-os a este painel para ver todos aqui
+          e, se quiser, mandar os avisos deles pelo WhatsApp daqui. ${can.admin() ? 'Gere um token logo abaixo e cole no painel do outro servidor.' : 'Peça a um administrador.'}</div>` : ''}
+        ${can.admin() && S.flAdmin ? serversView.adminHTML() : ''}`;
+    },
+    adminHTML() {
+      const a = S.flAdmin, cl = a.client || {};
+      const tokens = a.tokens || [];
+      const tokRow = (t) => `<div class="urow" data-tok="${esc(t.id)}" data-name="${esc(t.name)}"><div class="urow-h">
+        <div class="urow-n"><span><b>${esc(t.name)}</b> ${t.lastSeen ? (t.online ? badge('ok', 'conectado') : badge('crit', 'sem notícias')) : badge('info', 'nunca conectou')}</span>
+          <small>${t.whatsapp ? 'pode usar o WhatsApp daqui · ' : ''}criado ${t.created ? `em ${dt(t.created)}` : ''}${t.createdBy ? ` por ${esc(t.createdBy)}` : ''}${t.lastSeen ? ` · última notícia ${ago(t.lastSeen)}` : ''}${t.lastIp ? ` · IP ${esc(t.lastIp)}` : ''}</small></div>
+        <div class="controls"><button class="btn sm" type="button" data-fl="revoke">Revogar</button></div></div></div>`;
+      return `<div class="grid g2 fl-admin">
+        <section class="card"><div class="card-h"><h2>${icon('key')}Conectados a este painel</h2></div>
+          <p class="muted fl-hint">Um token para cada servidor que vai mandar notícias para cá. No painel do outro servidor, em
+            <b>Servidores → Conectar a um painel central</b>, use o endereço <code>${esc(location.origin)}</code> e o token.</p>
+          <div id="fl-new-secret">${serversView.secret || ''}</div>
+          ${tokens.length ? `<div class="ulist">${tokens.map(tokRow).join('')}</div>` : ''}
+          <form class="stack unew" id="fl-new" autocomplete="off"><h3>${icon('plus')}Gerar token</h3>
+            <div class="field"><label for="fl-name">Nome do servidor</label><input class="input" id="fl-name" maxlength="40" required placeholder="ex.: loja"></div>
+            <label class="perm"><input type="checkbox" class="sw" id="fl-wa"><span><b>Pode usar o WhatsApp deste painel</b>
+              <small>Os avisos dele saem pelo WhatsApp daqui, só para os destinos daqui (com o nome do servidor no fim), no máximo 30 por hora.</small></span></label>
+            <div class="form-err" id="fl-err" role="alert"></div>
+            <button class="btn primary" type="submit">Gerar token</button></form></section>
+        <section class="card"><div class="card-h"><h2>${icon('link')}Este servidor num painel central</h2></div>
+          ${cl.connected ? `
+            <div class="fl-st"><div>${cl.ok ? badge('ok', 'Conectado') : badge('crit', 'Com erro')} ao painel <b>${esc(cl.central || '')}</b></div>
+              <div class="muted"><a href="${esc(cl.url)}" target="_blank" rel="noopener noreferrer">${esc(cl.url)}</a> · desde ${dt(cl.since)}${cl.lastAt ? ` · último resumo ${ago(cl.lastAt)}` : ''}</div>
+              ${cl.ok ? '' : `<div class="form-err">${esc(cl.error || '')}</div>`}</div>
+            <label class="perm${cl.canWhatsApp ? '' : ' locked'}"><input type="checkbox" class="sw" id="fl-usewa" ${cl.useWhatsApp ? 'checked' : ''} ${cl.canWhatsApp ? '' : 'disabled'}>
+              <span><b>Mandar os avisos daqui pelo WhatsApp do central</b>
+              <small>${cl.canWhatsApp ? 'O que avisar e os horários continuam na aba Notificações daqui; os destinos são os do central.'
+                : 'O token deste servidor não pode usar o WhatsApp do central. Para isso, gere outro lá com essa opção marcada e conecte de novo.'}</small></span></label>
+            ${cl.useWhatsApp && !cl.centralWhatsApp ? `<div class="form-err">O WhatsApp do central não está pronto (desconectado, notificações desligadas ou sem destinos): os avisos daqui não saem por ele até resolver lá.</div>` : ''}
+            <div class="controls"><button class="btn" type="button" data-fl="disconnect">Desconectar</button></div>`
+          : `<p class="muted fl-hint">Para ver este servidor no painel central de outro servidor: gere um token lá (Servidores → Gerar token) e cole aqui.
+              Este painel passa a mandar um resumo por minuto (CPU, memória, disco, apps, alertas e banda). O central não consegue mexer em nada aqui.</p>
+            <form class="stack" id="fl-connect" autocomplete="off">
+              <div class="field"><label for="fl-url">Endereço do painel central</label><input class="input" id="fl-url" required placeholder="https://painel.exemplo.com" autocapitalize="off" spellcheck="false"></div>
+              <div class="field"><label for="fl-tok">Token</label><input class="input" id="fl-tok" required placeholder="vps_…" autocapitalize="off" spellcheck="false"></div>
+              <div class="form-err" id="fl-cerr" role="alert"></div>
+              <button class="btn primary" type="submit">${icon('link')}Conectar</button></form>`}
+        </section></div>`;
+    },
+    listen(body) {
+      body.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = e.target;
+        const btn = $('button[type="submit"]', f);
+        btn.disabled = true;
+        try {
+          if (f.id === 'fl-new') {
+            const name = $('#fl-name').value.trim();
+            const r = await api('/api/fleet/tokens', { method: 'POST', body: JSON.stringify({ name, whatsapp: $('#fl-wa').checked }) });
+            document.activeElement.blur();
+            await serversView.load();
+            serversView.secret = `<div class="passbox" role="status"><div><b>Token de ${esc(r.token.name)}</b></div>
+              <div class="passline"><code class="pass">${esc(r.secret)}</code><button class="btn sm" type="button" data-copy="${esc(r.secret)}">Copiar</button></div>
+              <div class="muted">Copie agora: ele não aparece de novo. No painel de ${esc(r.token.name)}: Servidores → Conectar a um painel central,
+                com o endereço <code>${esc(location.origin)}</code> e este token.</div></div>`;
+            serversView.render();
+          } else if (f.id === 'fl-connect') {
+            const r = await api('/api/fleet/connect', { method: 'POST', body: JSON.stringify({ url: $('#fl-url').value, token: $('#fl-tok').value }) });
+            document.activeElement.blur();
+            toast(`Conectado ao painel central ${r.client.central || r.client.url}.`);
+            serversView.load();
+          }
+        } catch (ex) {
+          if (ex.message !== 'login') $(f.id === 'fl-new' ? '#fl-err' : '#fl-cerr').textContent = ex.message;
+        }
+        btn.disabled = false;
+      });
+      body.addEventListener('change', async (e) => {
+        if (e.target.id !== 'fl-usewa') return;
+        const on = e.target.checked;
+        if (on && !await confirmDialog({ title: 'Mandar os avisos pelo WhatsApp do central?', ok: 'Usar o do central',
+          body: `<p>Os avisos deste servidor passam a sair pelo WhatsApp do painel central, para os destinos de lá (não os daqui), com o nome do servidor no fim.</p>
+            <p>O WhatsApp deste servidor, se houver, deixa de ser usado enquanto isso estiver ligado. Se o central sair do ar, os avisos daqui não chegam
+            (o central acusa o silêncio do mesmo jeito).</p>` })) { e.target.checked = false; return; }
+        try {
+          await api('/api/fleet/whatsapp', { method: 'POST', body: JSON.stringify({ on }) });
+          toast(on ? 'Os avisos daqui saem pelo WhatsApp do central.' : 'Os avisos daqui voltam a usar o WhatsApp deste servidor.');
+        } catch (ex) { if (ex.message !== 'login') toast(ex.message); }
+        serversView.load();
+      });
+      body.addEventListener('click', async (e) => {
+        const b = e.target.closest('[data-fl]');
+        if (!b) return;
+        try {
+          if (b.dataset.fl === 'revoke') {
+            const row = b.closest('[data-tok]');
+            const name = row.dataset.name;
+            if (!await confirmDialog({ title: `Revogar o token de ${name}?`, ok: 'Revogar', danger: true,
+              body: `<p>${esc(name)} para na hora de mandar notícias e avisos para cá: o card some e não há alerta de silêncio.</p>
+                <p>Nada muda no servidor ${esc(name)} em si. Para conectar de novo, gere outro token.</p>` })) return;
+            await api('/api/fleet/tokens/revoke', { method: 'POST', body: JSON.stringify({ id: row.dataset.tok }) });
+            toast(`Token de ${name} revogado.`);
+          } else if (b.dataset.fl === 'disconnect') {
+            if (!await confirmDialog({ title: 'Desconectar do painel central?', ok: 'Desconectar', danger: true,
+              body: `<p>Este servidor para de mandar o resumo${S.flAdmin.client.useWhatsApp ? ' e de usar o WhatsApp do central para os avisos (voltam a depender do WhatsApp daqui)' : ''}.
+                O central fica sabendo e mostra o card como "aguardando conexão", sem alerta.</p><p>O token continua valendo lá até alguém revogar.</p>` })) return;
+            await api('/api/fleet/disconnect', { method: 'POST', body: '{}' });
+            toast('Desconectado do painel central.');
+          }
+          serversView.load();
+        } catch (ex) { if (ex.message !== 'login') toast(ex.message); }
+      });
+    },
+  };
+
+  const VIEWS = { overview, servers: serversView, infos: infosView, ai: aiView, apps: appsView, traffic: trafficView, logs: logsView, system: systemView, limits: limitsView, notify: notifyView };
 
   // ------------------------------------------------------------------ eventos globais
   document.addEventListener('click', async (e) => {

@@ -163,6 +163,7 @@ type Service struct {
 	dirty    bool
 	saved    time.Time
 	aiFn     func() *ai.Client
+	relay    Relay      // WhatsApp do painel central (servidor conectado)
 	sendMu   sync.Mutex // um envio por vez
 }
 
@@ -845,6 +846,8 @@ func (s *Service) blockedLocked(manual bool) string {
 	switch {
 	case !s.cfg.Enabled && !manual:
 		return reasonOff
+	case s.relayActiveLocked():
+		return ""
 	case len(s.cfg.Recipients) == 0:
 		return "não há ninguém em \"Para quem enviar\""
 	case !s.wa.Configured():
@@ -896,9 +899,10 @@ func (s *Service) deliver(ctx context.Context, m message) bool {
 		return false
 	}
 	s.st.Sends = append(s.st.Sends, now.Unix())
+	relay := s.relayActiveLocked()
 	s.mu.Unlock()
 
-	okN, errs := s.sendAll(ctx, cfg.Recipients, m.text)
+	okN, errs := s.sendVia(ctx, relay, cfg.Recipients, m.text)
 
 	s.mu.Lock()
 	e := LogEntry{T: now.Unix(), Kind: m.kind, Title: m.title, Text: clipText(m.text), Status: "sent"}
@@ -964,7 +968,7 @@ func (s *Service) flushHeld(ctx context.Context) {
 	now := s.now()
 	s.mu.Lock()
 	cfg := s.cfg
-	if len(s.st.Held) == 0 || (cfg.Quiet && inQuiet(now.In(s.loc), cfg.QuietFrom, cfg.QuietTo)) || !s.status.Connected() {
+	if len(s.st.Held) == 0 || (cfg.Quiet && inQuiet(now.In(s.loc), cfg.QuietFrom, cfg.QuietTo)) || (!s.status.Connected() && !s.relayActiveLocked()) {
 		s.mu.Unlock()
 		return
 	}
@@ -1036,7 +1040,7 @@ func (s *Service) save(force bool) {
 func (s *Service) Alerts() []monitor.Alert {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.cfg.Enabled || len(s.cfg.Recipients) == 0 || !s.wa.Configured() || s.statusAt.IsZero() {
+	if !s.cfg.Enabled || s.relayActiveLocked() || len(s.cfg.Recipients) == 0 || !s.wa.Configured() || s.statusAt.IsZero() {
 		return nil
 	}
 	switch {

@@ -23,6 +23,8 @@ type View struct {
 	Held      int        `json:"held"`    // mensagens seguradas pelo silêncio
 	Pending   int        `json:"pending"` // alertas valendo que ainda não foram avisados
 	Running   []string   `json:"running"` // análises da IA em andamento
+	// Relay: os avisos daqui saem pelo WhatsApp do painel central (nome dele)
+	Relay string `json:"relay,omitempty"`
 }
 
 // View devolve a configuração e a situação (consultando o WhatsApp agora).
@@ -53,6 +55,12 @@ func (s *Service) View(ctx context.Context) View {
 	}
 	for k := range s.running {
 		v.Running = append(v.Running, k)
+	}
+	if s.relayActiveLocked() {
+		v.Relay = s.relay.Central()
+		if v.Relay == "" {
+			v.Relay = "painel central"
+		}
 	}
 	return v
 }
@@ -169,12 +177,15 @@ func (s *Service) Groups(ctx context.Context) ([]Group, error) {
 // SendNow manda na hora, pela tela: "test" ou um resumo/análise do catálogo.
 // O teste espera o envio; as análises da IA rodam em segundo plano.
 func (s *Service) SendNow(ctx context.Context, kind string) (string, error) {
+	s.mu.Lock()
+	cfg, relay := s.cfg, s.relayActiveLocked()
+	s.mu.Unlock()
+	if relay { // pelo WhatsApp do painel central: lá ele confere conexão e destinos
+		return s.sendNowKind(ctx, kind, cfg)
+	}
 	if err := s.needWA(); err != nil {
 		return "", err
 	}
-	s.mu.Lock()
-	cfg := s.cfg
-	s.mu.Unlock()
 	if len(cfg.Recipients) == 0 {
 		return "", errors.New("adicione alguém em \"Para quem enviar\" e salve")
 	}
@@ -187,12 +198,19 @@ func (s *Service) SendNow(ctx context.Context, kind string) (string, error) {
 	if !st.Connected() {
 		return "", errors.New("o WhatsApp está desconectado: conecte pelo QR code primeiro")
 	}
+	return s.sendNowKind(ctx, kind, cfg)
+}
+
+func (s *Service) sendNowKind(ctx context.Context, kind string, cfg Config) (string, error) {
 	now := s.now()
 	server := s.src.Overview().Server.Name
+	s.mu.Lock()
+	relay := s.relayActiveLocked()
+	s.mu.Unlock()
 	switch kind {
 	case "test":
 		text := fmt.Sprintf("✅ *Teste do VPServer · %s*\nAs notificações deste painel vão chegar aqui.%s", server, s.link("notify"))
-		okN, errs := s.sendAll(ctx, cfg.Recipients, text)
+		okN, errs := s.sendVia(ctx, relay, cfg.Recipients, text)
 		e := LogEntry{T: now.Unix(), Kind: "test", Title: "Mensagem de teste", Text: text, Status: "sent"}
 		if len(errs) > 0 {
 			e.Status, e.Error = "partial", strings.Join(errs, "; ")
@@ -256,4 +274,25 @@ func (s *Service) SeenOrigin(origin string) {
 	if changed {
 		s.save(true)
 	}
+}
+
+// PanelURL é o endereço público deste painel (o que vai nos links das mensagens).
+func (s *Service) PanelURL() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg.PanelURL
+}
+
+// WhatsAppMode diz por onde saem os avisos: "own" (WhatsApp deste servidor),
+// "central" (emprestado do painel central) ou "off".
+func (s *Service) WhatsAppMode() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case s.relayActiveLocked():
+		return "central"
+	case s.wa.Configured() && s.status.Connected():
+		return "own"
+	}
+	return "off"
 }

@@ -81,7 +81,7 @@ func TestLoginWithTwoFactor(t *testing.T) {
 	if u, _ := a.Get("ana"); !u.TwoFA().Enabled || !u.TwoFA().Asked || u.TwoFA().RecoveryLeft != recoveryN {
 		t.Fatalf("estado do 2FA: %+v", u.TwoFA())
 	}
-	h := New(nil, a, true, ai.Config{}, "", nil).Handler()
+	h := New(nil, a, true, ai.Config{}, "", nil, nil).Handler()
 
 	// a senha sozinha não entra: vem um bilhete para o código
 	rec := postJSON(h, "/api/login", `{"user":"ana","password":"senha-do-env-1"}`)
@@ -191,7 +191,7 @@ func TestNewRecoveryCodesNeedCode(t *testing.T) {
 // As rotas da tela: QR, ligar (cookie novo), dispensar a recomendação, desligar e o admin desligando o de outra pessoa.
 func TestTwoFactorRoutes(t *testing.T) {
 	a, _ := newAuth2FA(t, "chefe")
-	h := New(nil, a, true, ai.Config{}, "", nil).Handler()
+	h := New(nil, a, true, ai.Config{}, "", nil, nil).Handler()
 	ck := sessionCookie(a, "chefe")
 	me := func(c *http.Cookie) TwoFAInfo {
 		req := httptest.NewRequest("GET", "/api/me", nil)

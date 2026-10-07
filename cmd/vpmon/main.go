@@ -25,6 +25,7 @@ import (
 	_ "time/tzdata" // fuso horário embutido (a imagem não tem /usr/share/zoneinfo)
 
 	"github.com/edvitor13/vpserver-monitoring/internal/ai"
+	"github.com/edvitor13/vpserver-monitoring/internal/fleet"
 	"github.com/edvitor13/vpserver-monitoring/internal/monitor"
 	"github.com/edvitor13/vpserver-monitoring/internal/notify"
 	"github.com/edvitor13/vpserver-monitoring/internal/setup"
@@ -137,13 +138,23 @@ func main() {
 	wa := notify.NewEvolution(env("VPMON_WA_URL", "http://vpserver-whatsapp:8080"), os.Getenv("VPMON_WA_KEY"),
 		env("VPMON_WA_INSTANCE", "vpserver-monitoring"))
 	nt := notify.New(mon, wa, loc, dataDir, env("VPMON_SELF_PROJECT", "vpserver-monitoring"))
-	mon.SetExtraAlerts(nt.Alerts)
+
+	// Vários servidores: este painel pode ser central (recebe resumos de outros)
+	// e/ou estar conectado a um central (manda o resumo daqui).
+	fl := &fleet.Fleet{Central: fleet.NewCentral(dataDir)}
+	fl.Client = fleet.NewClient(dataDir, version, func() fleet.Report {
+		return fleet.FromOverview(mon.Overview(), nt.PanelURL(), nt.WhatsAppMode())
+	})
+	mon.SetExtraAlerts(func() []monitor.Alert { return append(nt.Alerts(), fl.Central.Alerts()...) })
+	nt.SetRelay(fl.Client)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	done := make(chan struct{})
 	go func() { mon.Run(ctx); close(done) }()
 	go nt.Run(ctx)
+	go fl.Client.Run(ctx)
+	defer fl.Central.Save()
 
 	// IA (DeepSeek), pelas variáveis DEEPSEEK_*. A chave também pode
 	// ser posta pela tela (Configurações → IA), o que vale mais que o .env.
@@ -160,7 +171,7 @@ func main() {
 	auth := web.NewAuth(user, pass, secret, env("VPMON_COOKIE_SECURE", "true") == "true", dataDir, forceChange)
 	srv := &http.Server{
 		Addr:              listen,
-		Handler:           web.New(mon, auth, env("VPMON_TRUST_CF", "true") == "true", aiCfg, filepath.Join(dataDir, "settings.json"), nt).Handler(),
+		Handler:           web.New(mon, auth, env("VPMON_TRUST_CF", "true") == "true", aiCfg, filepath.Join(dataDir, "settings.json"), nt, fl).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
