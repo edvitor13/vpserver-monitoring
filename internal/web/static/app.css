@@ -633,7 +633,8 @@ a.btn { text-decoration: none; color: inherit; }
 .cl-item.on { border-color: var(--accent); background: var(--accent-soft); }
 .cl-head { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .cl-t { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-.cl-size { white-space: nowrap; }
+.cl-size { display: flex; flex-direction: column; align-items: flex-end; text-align: right; white-space: nowrap; flex: none; }
+.cl-size small { font-size: .74rem; color: var(--muted); font-weight: 500; }
 .cl-d { margin: 6px 0 0; font-size: .82rem; }
 .cl-cons { display: flex; gap: 6px; align-items: flex-start; margin: 6px 0 0; font-size: .82rem; color: var(--warning-ink); }
 .cl-cons .i { flex: none; margin-top: 2px; }
@@ -641,7 +642,7 @@ a.btn { text-decoration: none; color: inherit; }
 .cl-apps { display: grid; gap: 4px; margin-top: 10px; }
 .cl-app { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--surface-2); font-size: .84rem; cursor: pointer; }
 .cl-app-n { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.cl-app-n small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-app-n small { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .cl-go { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
 .cl-inline { display: flex; align-items: center; gap: 6px; }
 .cl-inline .input { width: 90px; }
@@ -705,14 +706,6 @@ a.btn { text-decoration: none; color: inherit; }
 .dot.warn { background: var(--warning); }
 .dot.crit { background: var(--critical); }
 .dot.off { background: var(--muted); }
-.srv-switch { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
-.chip-srv { display: inline-flex; align-items: center; gap: 9px; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border);
-  background: var(--surface); color: inherit; font: inherit; cursor: pointer; flex: none; text-align: left; }
-.chip-srv span { display: flex; flex-direction: column; line-height: 1.2; }
-.chip-srv b { font-size: .86rem; }
-.chip-srv small { color: var(--muted); font-size: .72rem; }
-.chip-srv.on { border-color: var(--accent); background: var(--accent-soft); }
-.chip-srv:disabled { opacity: .55; cursor: not-allowed; }
 .cf-where { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); font-size: .84rem; }
 .cf-where .i { flex: none; }
 @media (max-width: 720px) {
@@ -725,3 +718,10 @@ a.btn { text-decoration: none; color: inherit; }
 .fl-limit small { display: block; margin-top: 4px; font-size: .76rem; }
 .fl-limit .input, .nt-max { width: 110px; }
 .urow-edit .perm { margin-bottom: 8px; }
+
+/* Grids de uma coluna: sempre com a coluna base. Sem ela, a coluna implícita
+   cresce até o conteúdo mais largo (lista de contêineres, nome sem espaço) e a
+   página inteira passa da largura do celular. */
+.alerts, .share, .app-facts, .rows, .chat, .msg.ai, .stack, .login-card form, .howto, .rcpts, .opts, .nlog, .cf-list,
+.ulist, .urow-edit, .perms, .passbox, .tf-section, .tf-enroll, .tf-codes, .srv-meters, .srv-alerts, .fl-st, .fl-share,
+#cl-body, .cl-items, .cl-apps, .cl-checks, .cl-never, .cl-steps, .cl-confirm { grid-template-columns: minmax(0, 1fr); }

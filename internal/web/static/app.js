@@ -754,20 +754,6 @@
     S.drawer = { update() {}, reload() {}, destroy() {} };
     $('.srv-item.on', m)?.focus();
   }
-  // Visão geral: trocar de servidor por ali também
-  function renderSwitch() {
-    const el = $('#ov-servers');
-    if (!el) return;
-    if (!others().length) { el.hidden = true; el.innerHTML = ''; return; }
-    if (S.fleetAt && Date.now() - S.fleetAt > 30000) loadFleet().then(renderSwitch).catch(() => {});
-    const chip = (id, name, rep, t, on) => {
-      const [lv, txt] = srvState(rep, t);
-      return `<button class="chip-srv${on ? ' on' : ''}" type="button" data-act="pick-server" data-v="${esc(id)}" ${t && !t.viewable ? 'disabled' : ''}
-        aria-pressed="${on}"><i class="dot ${lv}"></i><span><b>${esc(name)}</b><small>${esc(t ? txt : `este servidor · ${txt}`)}</small></span></button>`;
-    };
-    el.hidden = false;
-    el.innerHTML = chip('', localName(), S.fleet.self, null, !S.remote) + others().map((t) => chip(t.id, t.name, t.report, t, S.remote && S.remote.id === t.id)).join('');
-  }
   function isDark() {
     const t = document.documentElement.getAttribute('data-theme');
     return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
@@ -898,7 +884,6 @@
   const overview = {
     mount(v) {
       v.innerHTML = `<div class="page">
-        <section class="srv-switch" id="ov-servers" aria-label="Servidores" hidden></section>
         <section class="alerts" id="ov-alerts"></section>
         <section class="kpis k6" id="ov-kpis"></section>
         <section class="card" id="ov-share"></section>
@@ -913,7 +898,6 @@
             ${chartCard('ch-disk', 'Disco', 'Leitura e escrita')}
           </div>
         </section></div>`;
-      renderSwitch();
       const s = (k) => cssVar(k);
       const C = {
         cpu: makeChart($('#ch-cpu'), { stacked: true, fmt: pct, softMax: 10, series: [
@@ -949,7 +933,6 @@
       overview.reload = () => { teardown(); route(); };
     },
     update() {
-      renderSwitch();
       const o = S.ov, h = o.host, t = o.traffic;
       const hot = o.alerts.filter((a) => a.level !== 'info');
       const nInfo = o.alerts.length - hot.length;
@@ -2698,12 +2681,12 @@
       const apps = clLogApps(d);
       const logsTotal = apps.reduce((s, g) => s + g.size, 0);
       const freeable = d.buildCache + d.danglingSize + logsTotal;
-      const item = (key, checked, size, extra, disabledWhy) => {
+      const item = (key, checked, size, extra, disabledWhy, sub) => {
         const it = CL[key];
         const off = !can || !!disabledWhy;
         return `<div class="cl-item${checked && !off ? ' on' : ''}"><label class="cl-head">
           <input type="checkbox" class="sw" data-cl="${key}" ${checked && !off ? 'checked' : ''} ${off ? 'disabled' : ''}>
-          <span class="cl-t">${icon(it.icon)}<b>${it.name}</b></span><b class="num cl-size">${size}</b></label>
+          <span class="cl-t">${icon(it.icon)}<b>${it.name}</b></span><span class="cl-size"><b class="num">${size}</b>${sub ? `<small>${sub}</small>` : ''}</span></label>
           <p class="muted cl-d">${esc(it.desc)}</p>
           <p class="cl-cons">${icon('warn')}<span>${esc(it.cons)}</span></p>
           ${disabledWhy ? `<p class="muted cl-why">${esc(disabledWhy)}</p>` : ''}${extra || ''}</div>`;
@@ -2723,7 +2706,8 @@
         <section class="card"><div class="card-h"><h2>${icon('broom')}O que dá para limpar</h2></div>
           <div class="cl-items">
             ${item('build_cache', sel.build, bytes(d.buildCache), '', d.buildCache ? '' : 'Nada para limpar agora.')}
-            ${item('dangling', sel.dangling, `${bytes(d.danglingSize)}${d.danglingCount ? ` · ${d.danglingCount} imagem(ns)` : ''}`, '', d.danglingCount ? '' : 'Nenhuma imagem sem nome agora.')}
+            ${item('dangling', sel.dangling, bytes(d.danglingSize), '', d.danglingCount ? '' : 'Nenhuma imagem sem nome agora.',
+              d.danglingCount ? (d.danglingCount === 1 ? '1 imagem' : `${d.danglingCount} imagens`) : '')}
             ${item('logs', sel.apps.size > 0, bytes(logsTotal), logsList,
               !c.logsHelper ? 'O ajudante que limpa os logs (vpserver-cleaner) não está rodando. Ele sobe junto com o painel a partir desta versão: no servidor, docker compose up -d.'
                 : !d.logsKnown ? 'O tamanho dos logs ainda não foi medido (o vpserver-sizer mede a cada 5 min).' : apps.length ? '' : 'Nenhum log para limpar.')}
