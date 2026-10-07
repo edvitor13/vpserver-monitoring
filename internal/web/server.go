@@ -14,6 +14,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ type Server struct {
 	ai        *aiState // IA: configurada pela tela ou pelo .env (DEEPSEEK_*)
 	chatLimit chatLimiter
 	nt        *notify.Service // notificações pelo WhatsApp (nil = sem)
+	version   string          // versão do painel: vai no index.html e no X-VPMon-Version
 	sendLimit chatLimiter     // "enviar agora" da aba Notificações
 	pauseLim  chatLimiter     // pausar/retomar app
 	usersLim  chatLimiter     // criar/editar/remover usuários
@@ -50,7 +52,11 @@ type asset struct {
 // notificações (pode ser nil).
 func New(mon *monitor.Monitor, auth *Auth, trustCF bool, envAI ai.Config, settingsPath string, nt *notify.Service) *Server {
 	mime.AddExtensionType(".webmanifest", "application/manifest+json")
-	s := &Server{mon: mon, auth: auth, trustCF: trustCF, assets: map[string]asset{}, ai: newAIState(envAI, settingsPath), nt: nt}
+	s := &Server{mon: mon, auth: auth, trustCF: trustCF, assets: map[string]asset{}, ai: newAIState(envAI, settingsPath), nt: nt,
+		version: "dev"}
+	if mon != nil && mon.Version() != "" {
+		s.version = safeVersion.ReplaceAllString(mon.Version(), "")
+	}
 	if nt != nil {
 		nt.SetAI(s.ai.get) // as análises usam a mesma IA da tela
 	}
@@ -68,6 +74,7 @@ func New(mon *monitor.Monitor, auth *Auth, trustCF bool, envAI ai.Config, settin
 		s.assets["/"+p] = asset{body: b, ctype: ct, etag: `"` + hex.EncodeToString(sum[:8]) + `"`}
 		return nil
 	})
+	s.stampIndex()
 	return s
 }
 
@@ -115,7 +122,35 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/2fa/disable", s.private(s.twofaDisable))
 	mux.HandleFunc("POST /api/2fa/recovery", s.private(s.twofaRecovery))
 	mux.HandleFunc("POST /api/2fa/dismiss", s.private(s.twofaDismiss))
-	return secureHeaders(withGzip(mux))
+	return secureHeaders(s.versionHeader(withGzip(mux)))
+}
+
+var safeVersion = regexp.MustCompile(`[^A-Za-z0-9._-]`)
+
+// stampIndex põe a versão no index.html: na meta vpmon-version (a tela
+// compara com a do servidor) e nos endereços dos arquivos (?v=), para o
+// navegador nunca juntar uma página nova com um app.js velho.
+func (s *Server) stampIndex() {
+	a, ok := s.assets["/index.html"]
+	if !ok {
+		return
+	}
+	html := string(a.body)
+	for _, f := range []string{"app.js", "app.css", "theme.js", "uPlot.iife.min.js", "uPlot.min.css", "manifest.webmanifest"} {
+		html = strings.ReplaceAll(html, `"`+f+`"`, `"`+f+"?v="+s.version+`"`)
+	}
+	html = strings.Replace(html, `<meta charset="utf-8">`, `<meta charset="utf-8">`+"\n"+`<meta name="vpmon-version" content="`+s.version+`">`, 1)
+	sum := sha256.Sum256([]byte(html))
+	s.assets["/index.html"] = asset{body: []byte(html), ctype: a.ctype, etag: `"` + hex.EncodeToString(sum[:8]) + `"`}
+}
+
+// versionHeader manda a versão em toda resposta: uma tela aberta há tempos
+// percebe que o painel foi atualizado e se recarrega.
+func (s *Server) versionHeader(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-VPMon-Version", s.version)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func secureHeaders(next http.Handler) http.Handler {

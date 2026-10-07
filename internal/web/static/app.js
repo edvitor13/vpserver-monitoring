@@ -99,6 +99,7 @@
     play: '<polygon points="6 4 20 12 6 20 6 4"/>',
     user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
+    install: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
   };
   const icon = (n, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
   const STATUS = { ok: ['ok', 'OK'], warn: ['warn', 'Atenção'], crit: ['crit', 'Crítico'], info: ['info', 'Info'], off: ['pause', 'Parado'] };
@@ -137,11 +138,87 @@
   }
   const swatch = (color) => `<i class="swatch" style="background:${esc(color)}"></i>`;
 
+  // ------------------------------------------------------------------ versão (tela aberta há tempos x painel atualizado)
+  const APP_VERSION = (document.querySelector('meta[name="vpmon-version"]') || {}).content || '';
+  let newVersion = '';
+  // o servidor manda a versão dele em toda resposta; se a tela é de outra, ela
+  // se atualiza: sozinha quando não há sessão (login), com aviso dentro do painel
+  function checkVersion(server, status) {
+    if (!server || !APP_VERSION || server === APP_VERSION || newVersion === server) return;
+    newVersion = server;
+    let tried = '';
+    try { tried = sessionStorage.getItem('vpmon-reloaded-for') || ''; } catch { /* sem storage */ }
+    if ((!S.me || status === 401) && tried !== server) { // nada a perder: recarrega (uma vez por versão)
+      try { sessionStorage.setItem('vpmon-reloaded-for', server); } catch { /* sem storage */ }
+      location.reload();
+      return;
+    }
+    if (!$('.update-bar')) {
+      const bar = document.createElement('div');
+      bar.className = 'update-bar';
+      bar.setAttribute('role', 'status');
+      bar.innerHTML = `<span>${icon('refresh')}Nova versão do painel disponível.</span><button class="btn sm primary" type="button" data-act="update">Atualizar</button>`;
+      document.body.append(bar);
+    }
+  }
+
+  // fora do painel (login) a página não chama a API sozinha: confere a versão no /healthz
+  function pingVersion() {
+    fetch('/healthz', { cache: 'no-store' }).then((r) => checkVersion(r.headers.get('X-VPMon-Version'), 0)).catch(() => {});
+  }
+
+  // ------------------------------------------------------------------ instalar como app (PWA)
+  let installEvt = null; // Android/Chrome/Edge: o navegador oferece a instalação
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; });
+  window.addEventListener('appinstalled', () => { installEvt = null; $$('.install-only').forEach((x) => x.remove()); toast('Pronto: o VPServer está instalado como app.'); });
+  const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isMobile = () => matchMedia('(max-width: 720px), (pointer: coarse)').matches;
+  // oferece quando ainda não está instalado: no celular sempre (com o jeito de cada um), no computador se o navegador deixar
+  const canInstall = () => !isStandalone() && (isMobile() || !!installEvt);
+  async function installApp() {
+    if (installEvt) {
+      installEvt.prompt();
+      const r = await installEvt.userChoice.catch(() => ({}));
+      installEvt = null;
+      if (r.outcome !== 'accepted') toast('Instalação cancelada. Dá para instalar depois pelo menu Mais.');
+      return;
+    }
+    const steps = isIOS()
+      ? `<li>No <b>Safari</b>, toque em <b>Compartilhar</b> (o quadrado com a seta para cima).</li>
+         <li>Escolha <b>Adicionar à Tela de Início</b> e toque em <b>Adicionar</b>.</li>`
+      : `<li>No menu do navegador (<b>⋮</b> no Chrome), toque em <b>Instalar app</b> ou <b>Adicionar à tela inicial</b>.</li>
+         <li>Confirme em <b>Instalar</b>.</li>`;
+    await confirmDialog({ title: 'Instalar o VPServer como app', ok: 'Entendi',
+      body: `<ol class="howto">${steps}<li>Pronto: o painel abre em tela cheia, com ícone próprio. Quando houver versão nova, ele avisa e atualiza.</li></ol>` });
+  }
+  // aviso único no celular, depois do login
+  function offerInstall() {
+    let seen = false;
+    try { seen = localStorage.getItem('vpmon-install-offered') === '1'; } catch { /* sem storage */ }
+    if (seen || !isMobile() || !canInstall() || $('.install-bar')) return;
+    const bar = document.createElement('div');
+    bar.className = 'install-bar install-only';
+    bar.setAttribute('role', 'status');
+    bar.innerHTML = `<span>${icon('install')}Instale o painel como app no celular.</span>
+      <button class="btn sm primary" type="button" data-act="install">Instalar</button>
+      <button class="icon-btn" type="button" data-act="install-later" aria-label="Agora não">${icon('x')}</button>`;
+    document.body.append(bar);
+  }
+  const closeInstallBar = () => {
+    try { localStorage.setItem('vpmon-install-offered', '1'); } catch { /* sem storage */ }
+    $$('.install-bar').forEach((x) => x.remove());
+  };
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).catch(() => { /* sem SW: só não oferece instalar no Chrome */ });
+  }
+
   // ------------------------------------------------------------------ API
   async function api(path, opts = {}) {
     const headers = { 'X-Requested-With': 'vpmon' };
     if (opts.body) headers['Content-Type'] = 'application/json';
     const r = await fetch(path, { credentials: 'same-origin', ...opts, headers });
+    checkVersion(r.headers.get('X-VPMon-Version'), r.status);
     const j = await r.json().catch(() => ({}));
     if (r.status === 401 && !path.startsWith('/api/login')) {
       showLogin();
@@ -283,6 +360,8 @@
     teardown();
     closeDrawer();
     S.ov = null;
+    S.me = null;
+    pingVersion();
     clearTimeout(pollT);
     $('#app').innerHTML = `
       <div class="login"><div class="card login-card">
@@ -474,7 +553,10 @@
         Se alguém descobrir a senha, ainda não entra.</p><p>Leva um minuto. Dá para ligar ou desligar depois em <b>Configurações → Minha conta</b>.</p>` });
     api('/api/2fa/dismiss', { method: 'POST', body: '{}' }).catch(() => {});
     if (ok) openSettings('acesso', { enroll: true });
-    else toast('Tudo bem. Dá para ativar depois em Configurações → Minha conta.');
+    else {
+      toast('Tudo bem. Dá para ativar depois em Configurações → Minha conta.');
+      setTimeout(offerInstall, 4000); // um aviso por vez
+    }
   }
 
   // ------------------------------------------------------------------ casca
@@ -562,6 +644,7 @@
       <div class="sheet-who">${icon('user')}<span><b>${esc(S.me.user)}</b> · ${esc(roleText(S.me))}</span></div><div class="sheet-grid">
       ${visibleTabs().filter(([k]) => !BNAV.includes(k)).map(([k, l, ic]) => `<a class="sheet-item" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${l}</span></a>`).join('')}
       </div><div class="sheet-sep"></div><div class="sheet-grid">
+      ${canInstall() ? `<button class="sheet-item install-only" type="button" data-act="install">${icon('install')}<span>Instalar app</span></button>` : ''}
       <button class="sheet-item" type="button" data-act="settings">${icon('gear')}<span>Configurações</span></button>
       <button class="sheet-item" type="button" data-act="theme">${icon(isDark() ? 'sun' : 'moon')}<span>${isDark() ? 'Tema claro' : 'Tema escuro'}</span></button>
       <button class="sheet-item" type="button" data-act="logout">${icon('logout')}<span>Sair</span></button></div>`;
@@ -607,7 +690,11 @@
     }
     pollT = setTimeout(poll, 5000);
   }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && $('#view')) poll(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if ($('#view')) poll(); // painel: a própria consulta traz a versão
+    else pingVersion(); // login e primeiro acesso
+  });
 
   // ------------------------------------------------------------------ peças comuns
   function kpi(ic, label, value, sub, meter) {
@@ -1147,7 +1234,7 @@
     m.className = 'modal';
     m.innerHTML = `<div class="card login-card settings-card" role="dialog" aria-modal="true" aria-labelledby="st-t">
       <div class="card-h"><div><h2 id="st-t">${icon('gear')}Configurações</h2>
-        <div class="muted st-who">${icon('user')}${esc(me.user)} · ${esc(roleText(me))}</div></div>
+        <div class="muted st-who">${icon('user')}${esc(me.user)} · ${esc(roleText(me))} · versão ${esc(APP_VERSION || '?')}</div></div>
         <button class="icon-btn" type="button" data-act="close" aria-label="Fechar">${icon('x')}</button></div>
       ${tabs.length > 1 ? `<div class="seg" role="tablist" style="margin-bottom:14px">
         ${tabs.map(([k, l]) => `<button type="button" data-act="stab" data-v="${k}" aria-pressed="${tab === k}">${l}</button>`).join('')}</div>` : ''}
@@ -1176,7 +1263,10 @@
       } else {
         const origin = me.passwordSource === 'panel' ? `Senha trocada pelo painel em ${dt(me.passwordChanged)}.` : 'Hoje vale a senha definida no .env do servidor.';
         body.innerHTML = `<p class="muted" style="margin:0 0 12px;font-size:.84rem">${esc(origin)} Ao salvar, as outras sessões (outros aparelhos) saem.</p>${accessFormHTML(me.user, false)}
-          <section class="tf-section" id="tf-sec"></section>`;
+          <section class="tf-section" id="tf-sec"></section>
+          ${canInstall() ? `<section class="tf-section install-only"><h3>${icon('install')}App no celular</h3>
+            <p class="muted">Instale o painel como app: ícone na tela inicial, abre em tela cheia e se atualiza sozinho quando sai versão nova.</p>
+            <div><button class="btn" type="button" data-act="install">${icon('install')}Instalar app</button></div></section>` : ''}`;
         bindAccess('', (j) => { closeDrawer(); toast(`Acesso salvo (usuário ${j.user}). Os outros aparelhos vão precisar entrar de novo.`); });
         const sec = $('#tf-sec', body);
         if (opts.enroll && !(me.twoFA || {}).enabled) {
@@ -2121,6 +2211,9 @@
       if (a === 'logpick') { logsView.pick(v); return; }
       if (a === 'psort') { S.procSort = v; systemView.reload && systemView.reload(); return; }
       if (a === 'more') { openMore(); return; }
+      if (a === 'update') { location.reload(); return; }
+      if (a === 'install') { closeDrawer(); closeInstallBar(); installApp(); return; }
+      if (a === 'install-later') { closeInstallBar(); toast('Dá para instalar depois pelo menu Mais.'); return; }
       if (a === 'pause') { togglePause(v, act.dataset.pause === '1'); return; }
       if (a === 'theme') {
         if (act.closest('.sheet')) closeDrawer();
@@ -2159,6 +2252,7 @@
     route();
     const t = S.me.twoFA || {};
     if (!t.enabled && !t.asked) setTimeout(recommend2FA, 1500);
+    else setTimeout(offerInstall, 2500);
     await poll();
   }
   async function boot() {
