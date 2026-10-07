@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,22 +31,21 @@ const (
 	DefaultPassword = "admin"
 )
 
-// Auth é o login único do painel. A chave que assina o cookie mistura o
-// segredo com o usuário e a senha (ou o hash dela): trocar a senha derruba
-// todas as sessões.
+// Auth guarda os usuários (users.json) e as sessões. O cookie de sessão leva o
+// nome do usuário e é assinado com uma chave dele, que mistura o segredo do
+// painel com a senha (ou o hash dela) e o "epoch": trocar a senha ou as
+// permissões de alguém derruba as sessões só dessa pessoa.
 type Auth struct {
-	envUser   string
-	envPass   string // VPMON_PASSWORD (vale enquanto não houver senha trocada pela tela)
-	secret    string
-	secure    bool
-	storePath string // <data>/auth.json
+	envUser string
+	envPass string // VPMON_PASSWORD: vale para o admin inicial enquanto ele não trocar pela tela
+	secret  string
+	secure  bool
+	dir     string // pasta de dados ("" = nada é gravado; só o admin do .env)
+	path    string // <dir>/users.json
 
-	mu         sync.RWMutex
-	user       string
-	hash       string // senha trocada pela tela (PBKDF2); vazio = usa envPass
-	changed    int64
-	key        []byte
-	mustChange bool // senha inicial: só deixa trocar a senha até trocar
+	mu    sync.RWMutex
+	users []User
+	mtime time.Time // do users.json carregado (outro processo pode mudar: vpmon reset-password)
 
 	failMu sync.Mutex
 	fails  map[string][]time.Time
@@ -56,77 +57,110 @@ func deriveKey(secret, user, material string) []byte {
 	return mac.Sum(nil)
 }
 
-// NewAuth monta o login. storePath vazio desliga a troca de senha pela tela.
-// Sem senha no ambiente, vale admin/admin com troca obrigatória; forceChange
-// obriga a trocar também a senha inicial do .env (o instalador liga isso).
-func NewAuth(user, pass, secret string, secure bool, storePath string, forceChange bool) *Auth {
+// NewAuth monta o login. dir é a pasta de dados (users.json); vazio desliga a
+// gravação. Sem senha no ambiente, vale admin/admin com troca obrigatória;
+// forceChange obriga a trocar também a senha inicial do .env (o instalador liga isso).
+func NewAuth(user, pass, secret string, secure bool, dir string, forceChange bool) *Auth {
 	if user == "" {
 		user = DefaultUser
 	}
 	if pass == "" {
 		pass, forceChange = DefaultPassword, true
 	}
-	a := &Auth{envUser: user, envPass: pass, user: user, secret: secret, secure: secure, storePath: storePath,
-		fails: map[string][]time.Time{}}
-	if s, ok := loadStored(storePath); ok && storePath != "" {
-		// já trocou pela tela: vale o que foi gravado (usuário e senha)
-		a.hash, a.changed = s.Hash, s.Changed
-		if s.User != "" {
-			a.user = s.User
+	a := &Auth{envUser: user, envPass: pass, secret: secret, secure: secure, dir: dir, fails: map[string][]time.Time{}}
+	if dir != "" {
+		a.path = filepath.Join(dir, "users.json")
+	}
+	if users, mt, ok := readUsers(a.path); ok {
+		a.users, a.mtime = users, mt
+		return a
+	}
+	users, migrated := initialUsers(dir, user, forceChange)
+	a.users = users
+	if migrated { // auth.json de antes dos usuários: vira users.json
+		if mt, err := writeUsers(a.path, users); err == nil {
+			a.mtime = mt
+			os.Rename(filepath.Join(dir, "auth.json"), filepath.Join(dir, "auth.json.migrado"))
 		}
-		a.key = deriveKey(secret, a.user, s.Hash)
-	} else {
-		a.key = deriveKey(secret, user, pass)
-		a.mustChange = forceChange
 	}
 	return a
 }
 
-// MustChange diz se o login atual ainda é o inicial (só pode trocar a senha).
-func (a *Auth) MustChange() bool {
+// reload relê o users.json se ele mudou por fora (vpmon reset-password).
+func (a *Auth) reload() {
+	if a.path == "" {
+		return
+	}
+	st, err := os.Stat(a.path)
+	if err != nil {
+		return
+	}
 	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.mustChange
+	same := st.ModTime().Equal(a.mtime)
+	a.mu.RUnlock()
+	if same {
+		return
+	}
+	if users, mt, ok := readUsers(a.path); ok {
+		a.mu.Lock()
+		a.users, a.mtime = users, mt
+		a.mu.Unlock()
+	}
 }
 
-func (a *Auth) sign(payload string) string {
-	a.mu.RLock()
-	mac := hmac.New(sha256.New, a.key)
-	a.mu.RUnlock()
+func (a *Auth) keyFor(u User) []byte {
+	material := u.Hash
+	if material == "" {
+		material = a.envPass
+	}
+	if u.Epoch != "" {
+		material += "\x00" + u.Epoch
+	}
+	return deriveKey(a.secret, u.Name, material)
+}
+
+func sign(key []byte, payload string) string {
+	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(payload))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func (a *Auth) checkPass(pass string) bool {
-	a.mu.RLock()
-	hash := a.hash
-	a.mu.RUnlock()
-	if hash != "" {
-		return VerifyPassword(hash, pass)
+func (a *Auth) checkPass(u User, pass string) bool {
+	if u.Hash != "" {
+		return VerifyPassword(u.Hash, pass)
 	}
 	hp, wp := sha256.Sum256([]byte(pass)), sha256.Sum256([]byte(a.envPass))
 	return subtle.ConstantTimeCompare(hp[:], wp[:]) == 1
 }
 
-// Check confere usuário e senha em tempo constante.
-func (a *Auth) Check(user, pass string) bool {
-	a.mu.RLock()
-	cur := a.user
-	a.mu.RUnlock()
-	hu, wu := sha256.Sum256([]byte(user)), sha256.Sum256([]byte(cur))
-	okU := subtle.ConstantTimeCompare(hu[:], wu[:]) == 1
-	okP := a.checkPass(pass)
-	return okU && okP
+// dummyHash é conferido quando o usuário não existe, para o tempo da
+// resposta não revelar quais nomes existem (calculado só no primeiro uso:
+// o healthcheck e o init não pagam o PBKDF2).
+var dummyHash = sync.OnceValue(func() string { return HashPassword("vpmon-usuario-que-nao-existe") })
+
+// Login confere usuário e senha.
+func (a *Auth) Login(name, pass string) (User, bool) {
+	u, ok := a.Get(name)
+	if !ok {
+		VerifyPassword(dummyHash(), pass)
+		return User{}, false
+	}
+	return u, a.checkPass(u, pass)
 }
 
-// Issue grava o cookie de sessão.
-func (a *Auth) Issue(w http.ResponseWriter) {
+// Issue grava o cookie de sessão de um usuário.
+func (a *Auth) Issue(w http.ResponseWriter, name string) {
+	u, ok := a.Get(name)
+	if !ok {
+		return
+	}
 	nonce := make([]byte, 12)
 	rand.Read(nonce)
 	exp := time.Now().Add(sessionTTL).Unix()
-	payload := strconv.FormatInt(exp, 10) + "." + base64.RawURLEncoding.EncodeToString(nonce)
+	payload := base64.RawURLEncoding.EncodeToString([]byte(u.Name)) + "." + strconv.FormatInt(exp, 10) + "." +
+		base64.RawURLEncoding.EncodeToString(nonce)
 	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: payload + "." + a.sign(payload), Path: "/",
+		Name: cookieName, Value: payload + "." + sign(a.keyFor(u), payload), Path: "/",
 		MaxAge: int(sessionTTL.Seconds()), HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode,
 	})
 }
@@ -136,37 +170,54 @@ func (a *Auth) Clear(w http.ResponseWriter) {
 		HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode})
 }
 
-// Valid diz se a requisição tem uma sessão válida e não vencida.
-func (a *Auth) Valid(r *http.Request) bool {
+// Session devolve o usuário de uma sessão válida e não vencida.
+func (a *Auth) Session(r *http.Request) (User, bool) {
 	c, err := r.Cookie(cookieName)
 	if err != nil {
-		return false
+		return User{}, false
 	}
 	i := strings.LastIndexByte(c.Value, '.')
 	if i < 0 {
-		return false
+		return User{}, false
 	}
 	payload, sig := c.Value[:i], c.Value[i+1:]
-	if subtle.ConstantTimeCompare([]byte(sig), []byte(a.sign(payload))) != 1 {
-		return false
-	}
-	expS, _, _ := strings.Cut(payload, ".")
-	exp, err := strconv.ParseInt(expS, 10, 64)
-	return err == nil && time.Now().Unix() < exp
-}
-
-func (a *Auth) User() string {
+	parts := strings.Split(payload, ".")
+	a.reload()
 	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.user
+	var cands []User
+	var expS string
+	switch len(parts) {
+	case 3: // usuário.vencimento.nonce
+		name, err := base64.RawURLEncoding.DecodeString(parts[0])
+		if j := findUser(a.users, string(name)); err == nil && j >= 0 {
+			cands = append(cands, a.users[j])
+		}
+		expS = parts[1]
+	case 2: // sessão de antes dos usuários (um login só): vale para o admin migrado, até ele mudar
+		for _, u := range a.users {
+			if u.Admin && u.Epoch == "" {
+				cands = append(cands, u)
+			}
+		}
+		expS = parts[0]
+	}
+	a.mu.RUnlock()
+	exp, err := strconv.ParseInt(expS, 10, 64)
+	if err != nil || time.Now().Unix() >= exp {
+		return User{}, false
+	}
+	for _, u := range cands {
+		if subtle.ConstantTimeCompare([]byte(sig), []byte(sign(a.keyFor(u), payload))) == 1 {
+			return u, true
+		}
+	}
+	return User{}, false
 }
 
 // PasswordInfo diz de onde vem a senha: "env" (.env) ou "panel" (trocada pela tela, com a data).
-func (a *Auth) PasswordInfo() (source string, changed int64) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if a.hash != "" {
-		return "panel", a.changed
+func (a *Auth) PasswordInfo(u User) (source string, changed int64) {
+	if u.Hash != "" {
+		return "panel", u.Changed
 	}
 	return "env", 0
 }

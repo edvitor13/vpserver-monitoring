@@ -106,7 +106,7 @@ func (m *Monitor) Overview() Overview {
 	o := Overview{
 		Version: m.cfg.Version, Host: m.hostNow, DockerOK: m.dockerOK,
 		Updated: m.hostNow.T, Started: m.started.Unix(), Since: m.st.Created,
-		Apps: append([]AppView(nil), m.apps...),
+		Apps: append([]AppView{}, m.apps...), // nunca null: a tela faz .filter/.map direto
 	}
 	o.Server = m.serverInfo()
 	o.Storage = m.stor.view

@@ -29,7 +29,7 @@ var Catalog = []Kind{
 
 	{"apps", "mudancas", "Aplicação nova ou removida", "Quando aparece um projeto novo no Docker do servidor, ou quando um some.", true, false},
 	{"deploys", "mudancas", "Aplicação atualizada (deploy)", "Quando os contêineres de uma app voltam com outra imagem.", false, false},
-	{"security", "mudancas", "Segurança do painel", "Muitas senhas erradas no login e troca da senha do painel.", true, false},
+	{"security", "mudancas", "Segurança do painel", "Muitas senhas erradas no login, troca de senha e usuários criados, removidos ou com permissões alteradas.", true, false},
 	{"logins", "mudancas", "Cada entrada no painel", "Uma mensagem a cada login, com o IP.", false, false},
 	{"pauses", "mudancas", "App pausada ou retomada pela tela", "Um registro de quem usou o botão Pausar/Retomar (com o IP). Pausar nunca vira alerta.", false, false},
 

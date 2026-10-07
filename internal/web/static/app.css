@@ -515,3 +515,33 @@ input[type="time"].input { width: 120px; }
 .cf-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .86rem; }
 .cf-actions { justify-content: flex-end; margin-top: 18px; }
 @media (max-width: 520px) { .cf-actions .btn { flex: 1; justify-content: center; } }
+
+/* ---------- usuários ---------- */
+.who { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-2); font-size: .82rem; font-weight: 600; cursor: pointer; max-width: 160px; }
+.who > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who svg.i { width: 15px; height: 15px; }
+.who:hover { color: var(--text); border-color: var(--border-strong); }
+@media (max-width: 720px) { .bar-actions .who { display: none; } }
+.sheet-who { display: flex; align-items: center; gap: 8px; font-size: .86rem; color: var(--text-2); padding: 0 2px 12px; }
+.st-who { display: flex; align-items: center; gap: 6px; font-size: .8rem; margin-top: 2px; }
+.st-who svg.i { width: 14px; height: 14px; }
+.ulist { display: grid; gap: 8px; margin-bottom: 18px; }
+.urow { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
+.urow-h { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.urow-n { display: flex; flex-direction: column; min-width: 0; font-size: .9rem; }
+.urow-n small { color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }
+.urow-edit { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: grid; gap: 10px; }
+.perms { display: grid; gap: 8px; }
+.perm { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.perm .sw { margin-top: 2px; }
+.perm span { display: flex; flex-direction: column; font-size: .86rem; }
+.perm small { color: var(--muted); font-size: .76rem; }
+.perm.locked { cursor: not-allowed; }
+.perm.locked span { opacity: .55; }
+.unew { border-top: 1px solid var(--border); padding-top: 14px; }
+.unew h3 { display: flex; align-items: center; gap: 6px; }
+.passbox { background: var(--good-soft); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 14px; display: grid; gap: 6px; font-size: .86rem; }
+.passbox .muted { font-size: .78rem; }
+.passline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+code.pass { font-size: 1.05rem; padding: 4px 8px; letter-spacing: .04em; background: var(--surface); }

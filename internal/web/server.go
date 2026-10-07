@@ -36,6 +36,7 @@ type Server struct {
 	nt        *notify.Service // notificações pelo WhatsApp (nil = sem)
 	sendLimit chatLimiter     // "enviar agora" da aba Notificações
 	pauseLim  chatLimiter     // pausar/retomar app
+	usersLim  chatLimiter     // criar/editar/remover usuários
 }
 
 type asset struct {
@@ -88,15 +89,24 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/system", s.private(s.system))
 	mux.HandleFunc("GET /api/chat/status", s.private(s.chatStatus))
 	mux.HandleFunc("POST /api/chat", s.private(s.chat))
-	mux.HandleFunc("GET /api/settings", s.private(s.settingsGet))
-	mux.HandleFunc("POST /api/settings/ai", s.private(s.settingsAI))
-	mux.HandleFunc("POST /api/apps/pause", s.private(s.pauseApp))
-	mux.HandleFunc("GET /api/notify", s.private(s.notifyGet))
-	mux.HandleFunc("POST /api/notify/config", s.private(s.notifyConfig))
-	mux.HandleFunc("POST /api/notify/connect", s.private(s.notifyConnect))
-	mux.HandleFunc("POST /api/notify/logout", s.private(s.notifyLogout))
-	mux.HandleFunc("GET /api/notify/groups", s.private(s.notifyGroups))
-	mux.HandleFunc("POST /api/notify/send", s.private(s.notifySend))
+	// configurações do painel (IA e WhatsApp): só administradores
+	admin := func(h http.HandlerFunc) http.HandlerFunc { return s.private(need(isAdmin, msgAdminOnly, h)) }
+	mux.HandleFunc("GET /api/settings", admin(s.settingsGet))
+	mux.HandleFunc("POST /api/settings/ai", admin(s.settingsAI))
+	mux.HandleFunc("GET /api/notify", admin(s.notifyGet))
+	mux.HandleFunc("POST /api/notify/config", admin(s.notifyConfig))
+	mux.HandleFunc("POST /api/notify/connect", admin(s.notifyConnect))
+	mux.HandleFunc("POST /api/notify/logout", admin(s.notifyLogout))
+	mux.HandleFunc("GET /api/notify/groups", admin(s.notifyGroups))
+	mux.HandleFunc("POST /api/notify/send", admin(s.notifySend))
+	// ações nas aplicações e gestão de usuários: por permissão
+	mux.HandleFunc("POST /api/apps/pause", s.private(need(User.CanAct, msgNoActions, s.pauseApp)))
+	manage := func(h http.HandlerFunc) http.HandlerFunc { return s.private(need(User.CanManage, msgNoManage, h)) }
+	mux.HandleFunc("GET /api/users", manage(s.usersList))
+	mux.HandleFunc("POST /api/users", manage(s.usersCreate))
+	mux.HandleFunc("POST /api/users/update", manage(s.usersUpdate))
+	mux.HandleFunc("POST /api/users/reset", manage(s.usersReset))
+	mux.HandleFunc("POST /api/users/delete", manage(s.usersDelete))
 	return secureHeaders(withGzip(mux))
 }
 
@@ -146,19 +156,29 @@ func apiError(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": msg}})
 }
 
+type ctxKey struct{}
+
+// private exige sessão válida e põe o usuário no contexto (veja userOf).
 func (s *Server) private(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.auth.Valid(r) {
+		u, ok := s.auth.Session(r)
+		if !ok {
 			apiError(w, http.StatusUnauthorized, "login_required", "Entre de novo para continuar.")
 			return
 		}
-		// senha inicial (admin/admin ou a do instalador): nada além de trocar a senha
-		if s.auth.MustChange() && r.URL.Path != "/api/me" && r.URL.Path != "/api/password" {
-			apiError(w, http.StatusForbidden, "password_change_required", "Troque a senha inicial para continuar.")
+		// senha inicial ou provisória: nada além de trocar a senha
+		if u.MustChange && r.URL.Path != "/api/me" && r.URL.Path != "/api/password" {
+			apiError(w, http.StatusForbidden, "password_change_required", "Troque a senha provisória para continuar.")
 			return
 		}
-		h(w, r)
+		h(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
 	}
+}
+
+// userOf é o usuário logado (só dentro de rotas private).
+func userOf(r *http.Request) User {
+	u, _ := r.Context().Value(ctxKey{}).(User)
+	return u
 }
 
 // origin é o endereço por onde o navegador abriu o painel. Atrás da Cloudflare
@@ -172,9 +192,9 @@ func (s *Server) origin(r *http.Request) string {
 }
 
 // security avisa as notificações (senhas erradas, login, troca de senha).
-func (s *Server) security(kind, ip string) {
+func (s *Server) security(kind, ip, user string) {
 	if s.nt != nil {
-		s.nt.Security(kind, ip)
+		s.nt.Security(kind, ip, user)
 	}
 }
 
@@ -216,19 +236,21 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_request", "Dados inválidos.")
 		return
 	}
-	if !s.auth.Check(body.User, body.Password) {
+	u, ok := s.auth.Login(body.User, body.Password)
+	if !ok {
 		s.auth.Fail(ip)
 		slog.Warn("login falhou", "ip", ip)
-		s.security("login_fail", ip)
+		s.security("login_fail", ip, "")
 		time.Sleep(600 * time.Millisecond)
 		apiError(w, http.StatusUnauthorized, "bad_credentials", "Usuário ou senha incorretos.")
 		return
 	}
 	s.auth.Reset(ip)
-	s.auth.Issue(w)
-	slog.Info("login", "ip", ip)
-	s.security("login", ip)
-	writeJSON(w, http.StatusOK, map[string]any{"user": s.auth.User(), "mustChange": s.auth.MustChange()})
+	s.auth.Issue(w, u.Name)
+	s.auth.MarkLogin(u.Name)
+	slog.Info("login", "ip", ip, "usuario", u.Name)
+	s.security("login", ip, u.Name)
+	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "mustChange": u.MustChange})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -244,9 +266,11 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if s.nt != nil {
 		s.nt.SeenOrigin(s.origin(r))
 	}
-	src, changed := s.auth.PasswordInfo()
-	writeJSON(w, http.StatusOK, map[string]any{"user": s.auth.User(), "passwordSource": src,
-		"passwordChanged": changed, "mustChange": s.auth.MustChange()})
+	u := userOf(r)
+	src, changed := s.auth.PasswordInfo(u)
+	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "passwordSource": src,
+		"passwordChanged": changed, "mustChange": u.MustChange,
+		"admin": u.Admin, "actions": u.CanAct(), "manage": u.CanManage()})
 }
 
 // changePassword troca a senha (e, se pedido, o usuário) pela tela. Confere a
@@ -272,7 +296,8 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_request", "Dados inválidos.")
 		return
 	}
-	switch err := s.auth.ChangePassword(body.Current, body.New, body.User); err {
+	u, err := s.auth.ChangePassword(userOf(r).Name, body.Current, body.New, body.User)
+	switch err {
 	case nil:
 	case ErrBadCurrent:
 		s.auth.Fail(ip)
@@ -285,7 +310,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	case ErrSame:
 		apiError(w, http.StatusBadRequest, "same_password", "A nova senha é igual à atual.")
 		return
-	case ErrBadUser:
+	case ErrBadUser, ErrUserExists:
 		apiError(w, http.StatusBadRequest, "bad_user", err.Error())
 		return
 	default:
@@ -294,10 +319,10 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auth.Reset(ip)
-	s.auth.Issue(w)
-	slog.Info("senha trocada pela tela", "ip", ip, "usuario", s.auth.User())
-	s.security("password", ip)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": s.auth.User()})
+	s.auth.Issue(w, u.Name)
+	slog.Info("senha trocada pela tela", "ip", ip, "usuario", u.Name)
+	s.security("password", ip, u.Name)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": u.Name})
 }
 
 // --- dados -----------------------------------------------------------------------------
@@ -406,11 +431,12 @@ func (s *Server) pauseApp(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadGateway, "docker_error", "O Docker recusou: "+err.Error())
 		return
 	}
-	slog.Info("app "+verb+" pela tela", "app", body.App, "conteineres", strings.Join(names, ","), "ip", ip)
+	who := userOf(r).Name
+	slog.Info("app "+verb+" pela tela", "app", body.App, "conteineres", strings.Join(names, ","), "por", who, "ip", ip)
 	if s.nt != nil && len(names) > 0 {
 		emoji := map[bool]string{true: "⏸️", false: "▶️"}[body.Pause]
-		s.nt.Audit("pauses", fmt.Sprintf("%s %s pela tela", body.App, verb), fmt.Sprintf("%s *%s %s pelo painel · %s*\nContêineres: %s (IP %s).",
-			emoji, body.App, verb, s.mon.Overview().Server.Name, strings.Join(names, ", "), ip))
+		s.nt.Audit("pauses", fmt.Sprintf("%s %s pela tela", body.App, verb), fmt.Sprintf("%s *%s %s pelo painel · %s*\nContêineres: %s.\nPor %s (IP %s).",
+			emoji, body.App, verb, s.mon.Overview().Server.Name, strings.Join(names, ", "), who, ip))
 	}
 	res := map[string]any{"ok": true, "containers": names}
 	if err != nil {
