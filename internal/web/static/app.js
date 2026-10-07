@@ -2240,15 +2240,17 @@
               <button class="btn" type="button" data-act="settings" data-v="ia">Configurar a IA</button></div>` : ''}
             <div class="opts">${kinds(g).map(opt).join('')}</div></div>`).join('')}
         </section>
-        <section class="card"><div class="card-h"><h2>${icon('clock')}Horários</h2></div>
+        <section class="card"><div class="card-h"><h2>${icon('clock')}Horários e limite</h2></div>
           <div class="nt-times">
             <div class="field"><label for="nt-daily">Resumos e análises saem às</label><input class="input" type="time" id="nt-daily" value="${esc(c.dailyAt)}"></div>
+            <div class="field"><label for="nt-max">Máximo de mensagens por hora</label><input class="input nt-max" type="number" id="nt-max" min="5" max="500" value="${c.maxPerHour || 30}"></div>
             <div class="nt-quiet"><label class="sw-l"><input class="sw" type="checkbox" id="nt-quiet" ${c.quiet ? 'checked' : ''}><span>Horário de silêncio</span></label>
               <div class="nt-range"><div class="field"><label for="nt-qf">das</label><input class="input" type="time" id="nt-qf" value="${esc(c.quietFrom)}" ${c.quiet ? '' : 'disabled'}></div>
               <div class="field"><label for="nt-qt">às</label><input class="input" type="time" id="nt-qt" value="${esc(c.quietTo)}" ${c.quiet ? '' : 'disabled'}></div></div></div>
           </div>
           <p class="muted" style="margin:10px 0 0;font-size:.8rem">No silêncio, só o urgente (app caiu, servidor no limite, segurança) sai na hora; o resto chega numa mensagem só quando o silêncio acaba.
-            Fuso do painel: ${esc(n.tz)} (<code>VPMON_TZ</code>).${n.held ? ` Agora há ${n.held} mensagem(ns) segurada(s).` : ''}</p>
+            Fuso do painel: ${esc(n.tz)} (<code>VPMON_TZ</code>).${n.held ? ` Agora há ${n.held} mensagem(ns) segurada(s).` : ''}
+            O máximo por hora (padrão 30) vale para tudo que sai por este WhatsApp, inclusive os avisos dos servidores conectados; muito acima disso aumenta o risco de o WhatsApp bloquear o número.</p>
         </section>
         <section class="card"><div class="card-h"><h2>${icon('send')}Enviar agora</h2></div>
           <div class="controls">
@@ -2303,6 +2305,11 @@
         if (t.dataset.ev) { S.nt.config.events[t.dataset.ev] = t.checked; notifyView.save(); return; }
         if (t.id === 'nt-on') { S.nt.config.enabled = t.checked; t.nextElementSibling.textContent = t.checked ? 'Ligadas' : 'Desligadas'; notifyView.save(); return; }
         if (t.id === 'nt-quiet') { S.nt.config.quiet = t.checked; $('#nt-qf').disabled = $('#nt-qt').disabled = !t.checked; notifyView.save(); return; }
+        if (t.id === 'nt-max') {
+          const v = +t.value;
+          if (v >= 5 && v <= 500) { S.nt.config.maxPerHour = v; notifyView.save(); } else { toast('Use de 5 a 500 mensagens por hora.'); t.value = S.nt.config.maxPerHour || 30; }
+          return;
+        }
         const times = { 'nt-daily': 'dailyAt', 'nt-qf': 'quietFrom', 'nt-qt': 'quietTo' };
         if (times[t.id] && t.value) { S.nt.config[times[t.id]] = t.value; notifyView.save(); }
       });
@@ -2421,6 +2428,7 @@
         <div id="fl-body"><div class="loading"><div class="spinner"></div></div></div></div>`;
       serversView.at = 0;
       serversView.secret = '';
+      serversView.editing = null;
       serversView.listen($('#fl-body'));
       serversView.load();
     },
@@ -2479,8 +2487,15 @@
       const tokens = a.tokens || [];
       const tokRow = (t) => `<div class="urow" data-tok="${esc(t.id)}" data-name="${esc(t.name)}"><div class="urow-h">
         <div class="urow-n"><span><b>${esc(t.name)}</b> ${t.lastSeen ? (t.online ? badge('ok', 'conectado') : badge('crit', 'sem notícias')) : badge('info', 'nunca conectou')}</span>
-          <small>${t.whatsapp ? 'pode usar o WhatsApp daqui · ' : ''}criado ${t.created ? `em ${dt(t.created)}` : ''}${t.createdBy ? ` por ${esc(t.createdBy)}` : ''}${t.lastSeen ? ` · última notícia ${ago(t.lastSeen)}` : ''}${t.lastIp ? ` · IP ${esc(t.lastIp)}` : ''}</small></div>
-        <div class="controls"><button class="btn sm" type="button" data-fl="revoke">Revogar</button></div></div></div>`;
+          <small>${t.whatsapp ? `WhatsApp daqui: ${t.relayed} de ${t.relayLimit} na última hora · ` : 'sem o WhatsApp daqui · '}criado ${t.created ? `em ${dt(t.created)}` : ''}${t.createdBy ? ` por ${esc(t.createdBy)}` : ''}${t.lastSeen ? ` · última notícia ${ago(t.lastSeen)}` : ''}${t.lastIp ? ` · IP ${esc(t.lastIp)}` : ''}</small></div>
+        <div class="controls"><button class="btn sm" type="button" data-fl="edit">Ajustar</button><button class="btn sm" type="button" data-fl="revoke">Revogar</button></div></div>
+        <div class="urow-edit" ${serversView.editing === t.id ? '' : 'hidden'}>
+          <label class="perm"><input type="checkbox" class="sw" data-tw ${t.whatsapp ? 'checked' : ''}><span><b>Pode usar o WhatsApp deste painel</b>
+            <small>Os avisos dele saem pelo WhatsApp daqui, só para os destinos daqui.</small></span></label>
+          <div class="field fl-limit"><label>Limite de avisos dele por hora</label>
+            <div class="cl-inline"><input class="input" type="number" data-tl min="1" max="500" value="${t.relayLimit}"><span>por hora</span></div>
+            <small class="muted">Também conta no limite geral do WhatsApp daqui (Notificações). Muito acima de 30 por hora aumenta o risco de o WhatsApp bloquear o número.</small></div>
+          <div class="controls"><button class="btn primary sm" type="button" data-fl="save">Salvar</button></div></div></div>`;
       return `<div class="grid g2 fl-admin">
         <section class="card"><div class="card-h"><h2>${icon('key')}Conectados a este painel</h2></div>
           <p class="muted fl-hint">Um token para cada servidor que vai mandar notícias para cá. No painel do outro servidor, em
@@ -2490,7 +2505,9 @@
           <form class="stack unew" id="fl-new" autocomplete="off"><h3>${icon('plus')}Gerar token</h3>
             <div class="field"><label for="fl-name">Nome do servidor</label><input class="input" id="fl-name" maxlength="40" required placeholder="ex.: loja"></div>
             <label class="perm"><input type="checkbox" class="sw" id="fl-wa"><span><b>Pode usar o WhatsApp deste painel</b>
-              <small>Os avisos dele saem pelo WhatsApp daqui, só para os destinos daqui (com o nome do servidor no fim), no máximo 30 por hora.</small></span></label>
+              <small>Os avisos dele saem pelo WhatsApp daqui, só para os destinos daqui (com o nome do servidor no fim), até o limite abaixo. Dá para mudar depois em "Ajustar".</small></span></label>
+            <div class="field fl-limit"><label for="fl-limit">Limite de avisos dele por hora</label>
+              <div class="cl-inline"><input class="input" type="number" id="fl-limit" min="1" max="500" value="30"><span>por hora</span></div></div>
             <div class="form-err" id="fl-err" role="alert"></div>
             <button class="btn primary" type="submit">Gerar token</button></form></section>
         <section class="card"><div class="card-h"><h2>${icon('link')}Este servidor num painel central</h2></div>
@@ -2532,7 +2549,7 @@
         try {
           if (f.id === 'fl-new') {
             const name = $('#fl-name').value.trim();
-            const r = await api('/api/fleet/tokens', { method: 'POST', body: JSON.stringify({ name, whatsapp: $('#fl-wa').checked }) });
+            const r = await api('/api/fleet/tokens', { method: 'POST', body: JSON.stringify({ name, whatsapp: $('#fl-wa').checked, relayLimit: +$('#fl-limit').value || 0 }) });
             document.activeElement.blur();
             await serversView.load();
             serversView.secret = `<div class="passbox" role="status"><div><b>Token de ${esc(r.token.name)}</b></div>
@@ -2569,6 +2586,26 @@
         const b = e.target.closest('[data-fl]');
         if (!b) return;
         try {
+          if (b.dataset.fl === 'edit') {
+            const id = b.closest('[data-tok]').dataset.tok;
+            serversView.editing = serversView.editing === id ? null : id;
+            serversView.render();
+            return;
+          }
+          if (b.dataset.fl === 'save') {
+            const row = b.closest('[data-tok]');
+            const tok = (S.flAdmin.tokens || []).find((x) => x.id === row.dataset.tok) || {};
+            const whatsapp = $('[data-tw]', row).checked, limit = +$('[data-tl]', row).value;
+            if (!(limit >= 1 && limit <= 500)) { toast('O limite vai de 1 a 500 por hora.'); return; }
+            if (whatsapp && !tok.whatsapp && !await confirmDialog({ title: `${row.dataset.name} pode usar o WhatsApp daqui?`, ok: 'Liberar',
+              body: `<p>Os avisos de ${esc(row.dataset.name)} passam a sair pelo WhatsApp deste painel, <b>para os destinos daqui</b>, até ${limit} por hora (com o nome do servidor no fim).</p>
+                <p>Ele precisa ligar "Mandar os avisos daqui pelo WhatsApp do central" no painel dele. Vale em até 1 minuto, sem trocar o token.</p>` })) return;
+            const j = await api('/api/fleet/tokens/update', { method: 'POST', body: JSON.stringify({ id: row.dataset.tok, whatsapp, relayLimit: limit }) });
+            serversView.editing = null;
+            toast(j.token.whatsapp ? `${j.token.name}: até ${j.token.relayLimit} avisos por hora pelo WhatsApp daqui.` : `${j.token.name} não usa mais o WhatsApp daqui.`);
+            serversView.load();
+            return;
+          }
           if (b.dataset.fl === 'revoke') {
             const row = b.closest('[data-tok]');
             const name = row.dataset.name;

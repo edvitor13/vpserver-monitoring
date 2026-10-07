@@ -722,3 +722,6 @@ a.btn { text-decoration: none; color: inherit; }
 .fl-share { display: grid; gap: 10px; margin: 14px 0; padding-top: 12px; border-top: 1px solid var(--border); }
 .fl-share h3 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: .92rem; }
 .srv-foot .controls { display: flex; gap: 6px; flex-wrap: wrap; }
+.fl-limit small { display: block; margin-top: 4px; font-size: .76rem; }
+.fl-limit .input, .nt-max { width: 110px; }
+.urow-edit .perm { margin-bottom: 8px; }
