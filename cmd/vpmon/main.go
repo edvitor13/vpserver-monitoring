@@ -74,7 +74,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, "erro:", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Senha provisória de %s: %s\nNo próximo acesso o painel pede uma senha nova. As sessões abertas dessa pessoa caíram.\n", os.Args[2], pass)
+			fmt.Printf("Senha provisória de %s: %s\nNo próximo acesso o painel pede uma senha nova. As sessões abertas dessa pessoa caíram e a verificação em duas etapas foi desligada.\n", os.Args[2], pass)
 			return
 		case "init":
 			err := setup.Run(setup.Options{Out: env("VPMON_INIT_DIR", "/out"), DockerGID: os.Getenv("DOCKER_GID"),
