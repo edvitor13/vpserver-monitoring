@@ -43,6 +43,7 @@ aplicações (cada projeto do Docker Compose vira uma app).
 - [Chat com IA (DeepSeek)](#chat-com-ia-deepseek)
 - [Notificações pelo WhatsApp](#notificações-pelo-whatsapp)
 - [Pausar e retomar uma aplicação](#pausar-e-retomar-uma-aplicação)
+- [Usuários e permissões](#usuários-e-permissões)
 - [No celular](#no-celular)
 - [Como funciona](#como-funciona)
 - [Aplicações novas aparecem sozinhas](#aplicações-novas-aparecem-sozinhas)
@@ -128,9 +129,9 @@ depois pergunta se você quer ligar a **IA** com uma chave da DeepSeek e conecta
 **Atualizar:** `cd /opt/vpserver-monitoring && docker compose pull && docker compose up -d`.
 Para receber um `compose.yml` novo, rode o `init` de novo (ele não mexe no seu `.env`).
 
-**Esqueci a senha:** no `.env`, ponha uma senha nova em `VPMON_PASSWORD`, apague
-`data/auth.json` (`sudo rm /opt/vpserver-monitoring/data/auth.json`) e rode
-`docker compose up -d`.
+**Esqueci a senha:** `docker compose exec monitor /vpmon reset-password <usuário>`
+mostra uma senha provisória nova (no próximo acesso a pessoa cria a dela). Funciona com o
+painel rodando e não mexe nos outros usuários.
 
 **Remover:** `docker compose down` (e `sudo rm -rf /opt/vpserver-monitoring` para apagar
 histórico e senha). Nada fora dessa pasta e do projeto `vpserver-monitoring` é tocado.
@@ -281,7 +282,7 @@ primeiro acesso):
 | | Avisar quando resolver | ✓ |
 | Mudanças e segurança | Aplicação nova ou removida | ✓ |
 | | Aplicação atualizada (deploy) | |
-| | Segurança do painel (senhas erradas, troca de senha) | ✓ |
+| | Segurança do painel (senhas erradas, troca de senha, usuários criados/removidos/alterados) | ✓ |
 | | Cada entrada no painel | |
 | | App pausada ou retomada pela tela (só um registro, com o IP) | |
 | Resumos | Resumo diário (ontem: CPU, memória, disco, banda, top apps, quedas) | ✓ |
@@ -314,9 +315,39 @@ mostra o que saiu, o que ficou segurado e o que falhou (com o motivo).
 
 ---
 
+## Usuários e permissões
+
+Dá para cadastrar **outras pessoas**, cada uma com o próprio login. O **primeiro
+administrador** é o do `.env` (`VPMON_USER`, ou `admin` na instalação nova).
+
+| | Ver tudo (dados, logs, chat com a IA) | Pausar/retomar apps | Criar e gerenciar usuários | IA e WhatsApp |
+|---|---|---|---|---|
+| **Administrador** | ✓ | ✓ | ✓ (inclusive administradores) | ✓ |
+| **Ações nas apps** | ✓ | ✓ | | |
+| **Gerencia usuários** | ✓ | | ✓ (só não-administradores, com no máximo as próprias permissões) | |
+| **Só leitura** (nenhuma marcada) | ✓ | | | |
+
+- **Cadastrar:** Configurações → **Usuários** → *Novo usuário* (nome e permissões). O painel
+  gera uma **senha provisória**, mostrada uma vez: passe para a pessoa, que cria a dela no
+  primeiro acesso.
+- **Depois:** mudar permissões, gerar nova senha provisória ou remover. Trocar a senha ou
+  as permissões de alguém **derruba as sessões só dessa pessoa**. Ninguém mexe em si mesmo
+  por ali (a própria senha fica em *Minha conta*) e sempre sobra um administrador.
+- **Na tela**, cada um vê só o que pode: o botão Pausar aparece para quem tem ações, a aba
+  Notificações e as configurações de IA e WhatsApp só para administradores. **A API recusa
+  do mesmo jeito** (403), mesmo que alguém chame direto.
+- **Avisos:** com "Segurança do painel" ligado nas Notificações, criar, remover, gerar senha
+  ou mudar permissões de alguém avisa no WhatsApp, com quem fez e de qual IP.
+- **Onde fica:** `data/users.json` (600), com a senha só como hash. O `auth.json` de versões
+  antigas vira o primeiro administrador sozinho (guardado como `auth.json.migrado`), sem
+  derrubar a sessão aberta.
+
+---
+
 ## Pausar e retomar uma aplicação
 
-Na aba **Aplicações** (e no detalhe de cada app) há o botão **Pausar**. Ele pede
+Na aba **Aplicações** (e no detalhe de cada app) há o botão **Pausar**, para
+administradores e usuários com a permissão de ações. Ele pede
 confirmação e então **congela** todos os contêineres da app (`docker pause`):
 
 - o site ou a API da app **para de responder** até você clicar em **Retomar**;
@@ -575,20 +606,24 @@ requisição; requisição sem resposta cai em 100 s.
 ## Segurança
 
 - **Login obrigatório** para qualquer dado (só a página vazia, o `/healthz` e
-  os arquivos estáticos são públicos). Um usuário, senha com 10+ caracteres.
+  os arquivos estáticos são públicos). Cada pessoa com o próprio usuário, senha com
+  10+ caracteres e permissões conferidas em toda rota da API (ver
+  [Usuários e permissões](#usuários-e-permissões)). O tempo da resposta do login não
+  revela quais nomes de usuário existem.
 - **Senha inicial com troca obrigatória:** o `init` gera uma senha aleatória para
   o usuário `admin`; sem nenhuma senha configurada, vale `admin`/`admin`. Nos dois
   casos, até trocar, a API só responde `/api/me` e `/api/password` (o resto dá
   403 `password_change_required`).
 - **Cookie de sessão** assinado (HMAC-SHA256), `HttpOnly`, `Secure`,
-  `SameSite=Strict`, válido por 30 dias. A chave mistura um segredo aleatório
-  (`/data/secret`) com a senha: **trocar a senha derruba todas as sessões**.
+  `SameSite=Strict`, válido por 30 dias, com o nome do usuário. A chave é de cada
+  pessoa e mistura um segredo aleatório (`/data/secret`) com a senha dela: **trocar a
+  senha ou as permissões de alguém derruba as sessões dessa pessoa**.
 - **Freio de tentativas:** 8 erros por IP em 15 min bloqueiam aquele IP; 40
   erros no total bloqueiam o login por 1 min. O IP real vem do
   `CF-Connecting-IP`, e ninguém chega ao painel sem passar pelo túnel.
-- **Trocar senha e usuário pela tela** (Configurações → Acesso): pede a senha
+- **Trocar senha e nome pela tela** (Configurações → Minha conta): pede a senha
   atual. A nova fica só como hash PBKDF2-SHA256 (310 mil iterações) em
-  `/data/auth.json` e, a partir daí, vale mais que a do `.env`.
+  `/data/users.json` e, a partir daí, vale mais que a do `.env`.
 - **Chave da IA pela tela** (Configurações → IA): testada na DeepSeek antes de
   salvar, gravada só no servidor (`/data/settings.json`, 600) e mostrada sempre
   mascarada (`sk-…abcd`); nunca volta para o navegador.
@@ -679,15 +714,14 @@ python scripts/server.py rollback   # volta para a versão anterior
 python scripts/server.py                    # estado: contêineres, consumo, versão no ar
 python scripts/server.py logs -f            # logs do painel (ou: logs tunnel / logs dockerproxy)
 python scripts/server.py restart            # recria os contêineres (depois de mudar o .env)
-python scripts/server.py password           # ESQUECI A SENHA: gera uma nova e mostra uma vez
-VPMON_NEW_PASSWORD='frase longa' python scripts/server.py password   # define uma senha
+python scripts/server.py password <usuário> # ESQUECI A SENHA: gera uma provisória e mostra uma vez
 python scripts/server.py ssh
 ```
 
-**Trocar a senha (e o usuário):** pelo próprio painel, em Configurações (ícone de
-engrenagem). O `server.py password` serve para quando você não lembra a atual: ele
-troca a do `.env` e apaga a senha salva pela tela. Instalado pela imagem: veja
-"Esqueci a senha" em [Instalar no seu servidor](#instalar-no-seu-servidor).
+**Trocar a senha (e o nome):** pelo próprio painel, em Configurações → Minha conta. O
+`server.py password <usuário>` serve para quando ninguém lembra a senha: roda o
+`vpmon reset-password` no servidor (os outros usuários ficam como estão). Instalado pela
+imagem: veja "Esqueci a senha" em [Instalar no seu servidor](#instalar-no-seu-servidor).
 
 **Instalado pela imagem:** `docker compose ps`, `docker compose logs -f monitor`,
 `docker compose pull && docker compose up -d` (atualizar), dentro de `/opt/vpserver-monitoring`.
@@ -707,8 +741,8 @@ quem cria é o `vpmon init`; no deploy por pacote, o modelo é
 
 | Variável | Padrão | Para quê |
 |---|---|---|
-| `VPMON_USER` | `admin` | usuário do login (o trocado pela tela vale mais) |
-| `VPMON_PASSWORD` | vazio = `admin` | senha inicial (sem `$`). A trocada pela tela vale mais |
+| `VPMON_USER` | `admin` | primeiro administrador (o nome trocado pela tela vale mais) |
+| `VPMON_PASSWORD` | vazio = `admin` | senha inicial desse administrador (sem `$`). A trocada pela tela vale mais |
 | `VPMON_FORCE_PASSWORD_CHANGE` | `true` no `init` | obriga a trocar a senha inicial no primeiro acesso |
 | `VPMON_TUNNEL_TOKEN` | — | token do seu túnel na Cloudflare (domínio próprio) |
 | `VPMON_TUNNEL_COMMAND` | `tunnel --no-autoupdate run` | sem domínio: `tunnel --no-autoupdate --url http://vpserver-monitor:8080` (Quick Tunnel) |
@@ -772,7 +806,9 @@ validada para daltonismo nos dois temas. Status sempre com ícone + texto.
 `/api/chat/status`, `POST /api/chat` (SSE: eventos `tool`, `delta`, `done`, `error`),
 `/api/history/apps?range=&f=cpu|mem|rx|tx|rd|wr`, `/api/history/unit?key=c:<nome>|s:<serviço>|app:<app>`,
 `/api/traffic`, `/api/logs?c=<contêiner>|*&tail=&errors=1`, `/api/logs/targets`,
-`/api/system`, `/api/me`; `POST /api/login`, `/api/logout`, `/api/password`.
+`/api/system`, `/api/me` (usuário e permissões); `POST /api/login`, `/api/logout`, `/api/password`,
+`/api/apps/pause` (ações); `GET/POST /api/users`, `POST /api/users/update|reset|delete`
+(gestão de usuários); `/api/settings*` e `/api/notify*` (administradores).
 Períodos: `1h`, `6h`, `24h`, `7d`, `30d`, `1y`.
 Erros: `{"error": {"code": "...", "message": "..."}}`.
 
