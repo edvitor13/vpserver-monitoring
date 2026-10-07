@@ -545,3 +545,27 @@ input[type="time"].input { width: 120px; }
 .passbox .muted { font-size: .78rem; }
 .passline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 code.pass { font-size: 1.05rem; padding: 4px 8px; letter-spacing: .04em; background: var(--surface); }
+
+/* ---------- verificação em duas etapas ---------- */
+.tf-title { display: flex; align-items: center; gap: 8px; font-size: 1.05rem; }
+.tf-title svg.i, .tf-section h3 svg.i { color: var(--accent); }
+.tf-sub { margin: 6px 0 0; font-size: .86rem; }
+.code-input { font: 600 1.25rem/1 var(--mono); letter-spacing: .18em; text-align: center; }
+.tf-links { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.linkish { border: 0; background: none; padding: 4px 0; color: var(--accent); cursor: pointer; font-size: .84rem; text-align: left; }
+.linkish:hover { text-decoration: underline; }
+.tf-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); display: grid; gap: 10px; }
+.tf-section h3 { display: flex; align-items: center; gap: 6px; }
+.tf-section > p { margin: 0; font-size: .84rem; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tf-enroll { display: grid; gap: 12px; }
+.tf-qr { display: grid; justify-items: start; }
+/* QR sempre em fundo branco (a câmera precisa de contraste), nos dois temas */
+.qr-svg { width: min(220px, 70vw); height: auto; border-radius: 10px; border: 1px solid var(--border); }
+.tf-alt { display: grid; gap: 8px; justify-items: start; font-size: .84rem; }
+.tf-alt summary { cursor: pointer; color: var(--text-2); }
+.tf-key { font-size: .95rem; letter-spacing: .06em; word-break: break-all; }
+.tf-codes { display: grid; gap: 10px; font-size: .86rem; }
+.tf-codes p { margin: 0; }
+.codes { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.codes code { display: block; text-align: center; font-size: .95rem; padding: 6px; }
+a.btn { text-decoration: none; color: inherit; }
