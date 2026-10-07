@@ -1,7 +1,11 @@
 package docker
 
 import (
+	"context"
 	"encoding/binary"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -70,5 +74,53 @@ func TestMarkRequested(t *testing.T) {
 	}
 	if !got[0].Requested || got[2].Requested {
 		t.Fatalf("parada pedida x queda: %+v", got)
+	}
+}
+
+func TestPrunesAskOnlyTheSafeThings(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
+		switch r.URL.Path {
+		case "/build/prune":
+			w.Write([]byte(`{"CachesDeleted":["a","b"],"SpaceReclaimed":1500}`))
+		case "/images/prune":
+			w.Write([]byte(`{"ImagesDeleted":[{"Untagged":"x"},{"Deleted":"sha256:1"},{"Deleted":"sha256:2"}],"SpaceReclaimed":700}`))
+		default:
+			http.Error(w, "não", http.StatusForbidden)
+		}
+	}))
+	defer srv.Close()
+	c := New(srv.URL)
+	ctx := context.Background()
+	if p, err := c.PruneBuildCache(ctx); err != nil || p.Freed != 1500 || p.Removed != 2 {
+		t.Fatalf("cache de build: %+v %v", p, err)
+	}
+	if p, err := c.PruneDanglingImages(ctx); err != nil || p.Freed != 700 || p.Removed != 2 {
+		t.Fatalf("imagens sem nome: %+v %v", p, err)
+	}
+	want := []string{"POST /build/prune?all=1", `POST /images/prune?filters=%7B%22dangling%22%3A%5B%22true%22%5D%7D`}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("pedidos ao Docker: %v", got)
+	}
+}
+
+func TestDiskUsageDangling(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"LayersSize":5000,"Images":[
+			{"Id":"a","RepoTags":["loja:latest"],"Size":2000,"SharedSize":0,"Containers":1},
+			{"Id":"b","RepoTags":[],"Size":900,"SharedSize":100,"Containers":0},
+			{"Id":"c","RepoTags":["<none>:<none>"],"Size":400,"SharedSize":-1,"Containers":0},
+			{"Id":"d","RepoTags":null,"Size":300,"SharedSize":0,"Containers":1}],
+			"Containers":[],"Volumes":[],"BuildCache":[{"Size":50,"InUse":false}]}`))
+	}))
+	defer srv.Close()
+	du, err := New(srv.URL).DiskUsage(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "d" não tem nome mas um contêiner usa: o Docker não apagaria
+	if du.DanglingCount != 2 || du.DanglingSize != 800+400 {
+		t.Fatalf("sem nome e sem uso: %d imagens, %d bytes", du.DanglingCount, du.DanglingSize)
 	}
 }
