@@ -17,29 +17,38 @@ import (
 
 func TestAuthCookieRoundTrip(t *testing.T) {
 	a := NewAuth("ana", "senha-muito-boa", "segredo", true, "", false)
-	if !a.Check("ana", "senha-muito-boa") || a.Check("ana", "errada") || a.Check("outro", "senha-muito-boa") {
-		t.Fatal("Check errado")
+	if !canLogin(a, "ana", "senha-muito-boa") || canLogin(a, "ana", "errada") || canLogin(a, "outro", "senha-muito-boa") {
+		t.Fatal("Login errado")
 	}
-	rec := httptest.NewRecorder()
-	a.Issue(rec)
-	ck := rec.Result().Cookies()[0]
+	ck := sessionCookie(a, "ana")
 	if !ck.HttpOnly || !ck.Secure || ck.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("cookie sem as proteções: %+v", ck)
 	}
 	req := httptest.NewRequest("GET", "/api/me", nil)
 	req.AddCookie(ck)
-	if !a.Valid(req) {
+	if u, ok := a.Session(req); !ok || u.Name != "ana" {
 		t.Fatal("cookie recém-emitido deveria valer")
 	}
-	// trocar a senha derruba as sessões
-	if NewAuth("ana", "outra-senha-boa", "segredo", true, "", false).Valid(req) {
+	// trocar a senha do .env derruba as sessões
+	if _, ok := NewAuth("ana", "outra-senha-boa", "segredo", true, "", false).Session(req); ok {
 		t.Fatal("cookie deveria cair ao trocar a senha")
 	}
 	bad := httptest.NewRequest("GET", "/api/me", nil)
 	bad.AddCookie(&http.Cookie{Name: cookieName, Value: ck.Value[:len(ck.Value)-2] + "xx"})
-	if a.Valid(bad) {
+	if _, ok := a.Session(bad); ok {
 		t.Fatal("cookie adulterado passou")
 	}
+}
+
+func canLogin(a *Auth, name, pass string) bool {
+	_, ok := a.Login(name, pass)
+	return ok
+}
+
+func sessionCookie(a *Auth, name string) *http.Cookie {
+	rec := httptest.NewRecorder()
+	a.Issue(rec, name)
+	return rec.Result().Cookies()[0]
 }
 
 func TestLoginRateLimit(t *testing.T) {
@@ -95,35 +104,33 @@ func TestPasswordHashAndChange(t *testing.T) {
 	if !VerifyPassword(h, "uma-senha-nova") || VerifyPassword(h, "outra") || VerifyPassword("lixo", "x") {
 		t.Fatal("hash/verify errado")
 	}
-	store := filepath.Join(t.TempDir(), "auth.json")
-	a := NewAuth("ana", "senha-do-env-1", "s", true, store, false)
-	rec := httptest.NewRecorder()
-	a.Issue(rec)
+	dir := t.TempDir()
+	a := NewAuth("ana", "senha-do-env-1", "s", true, dir, false)
 	old := httptest.NewRequest("GET", "/", nil)
-	old.AddCookie(rec.Result().Cookies()[0])
+	old.AddCookie(sessionCookie(a, "ana"))
 
-	if err := a.ChangePassword("errada", "senha-nova-boa", ""); err != ErrBadCurrent {
+	if _, err := a.ChangePassword("ana", "errada", "senha-nova-boa", ""); err != ErrBadCurrent {
 		t.Fatalf("atual errada: %v", err)
 	}
-	if err := a.ChangePassword("senha-do-env-1", "curta", ""); err != ErrWeak {
+	if _, err := a.ChangePassword("ana", "senha-do-env-1", "curta", ""); err != ErrWeak {
 		t.Fatalf("fraca: %v", err)
 	}
-	if err := a.ChangePassword("senha-do-env-1", "senha-nova-boa", ""); err != nil {
+	if _, err := a.ChangePassword("ana", "senha-do-env-1", "senha-nova-boa", ""); err != nil {
 		t.Fatal(err)
 	}
-	if a.Check("ana", "senha-do-env-1") || !a.Check("ana", "senha-nova-boa") {
+	if canLogin(a, "ana", "senha-do-env-1") || !canLogin(a, "ana", "senha-nova-boa") {
 		t.Fatal("depois da troca só a nova deveria valer")
 	}
-	if a.Valid(old) {
+	if _, ok := a.Session(old); ok {
 		t.Fatal("sessões antigas deveriam cair")
 	}
 	// reiniciando, a senha trocada continua valendo (vale mais que o .env)
-	b := NewAuth("ana", "senha-do-env-1", "s", true, store, false)
-	if !b.Check("ana", "senha-nova-boa") || b.Check("ana", "senha-do-env-1") {
+	b := NewAuth("ana", "senha-do-env-1", "s", true, dir, false)
+	if !canLogin(b, "ana", "senha-nova-boa") || canLogin(b, "ana", "senha-do-env-1") {
 		t.Fatal("a senha gravada deveria sobreviver ao reinício")
 	}
-	if src, _ := b.PasswordInfo(); src != "panel" {
-		t.Fatalf("origem: %s", src)
+	if u, _ := b.Get("ana"); func() string { s, _ := b.PasswordInfo(u); return s }() != "panel" {
+		t.Fatal("origem da senha deveria ser o painel")
 	}
 }
 
@@ -153,10 +160,10 @@ func TestGzip(t *testing.T) {
 }
 
 func TestDefaultLoginForcesChange(t *testing.T) {
-	store := filepath.Join(t.TempDir(), "auth.json")
-	a := NewAuth("", "", "s", true, store, false) // nada configurado: admin/admin
-	if !a.Check("admin", "admin") || !a.MustChange() {
-		t.Fatal("sem senha configurada, deveria valer admin/admin com troca obrigatória")
+	dir := t.TempDir()
+	a := NewAuth("", "", "s", true, dir, false) // nada configurado: admin/admin
+	if u, ok := a.Login("admin", "admin"); !ok || !u.MustChange || !u.Admin {
+		t.Fatal("sem senha configurada, deveria valer admin/admin (administrador) com troca obrigatória")
 	}
 	h := New(nil, a, true, ai.Config{}, "", nil).Handler()
 	req := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"user":"admin","password":"admin"}`))
@@ -176,29 +183,29 @@ func TestDefaultLoginForcesChange(t *testing.T) {
 		t.Fatalf("deveria bloquear até trocar: %d %s", rec.Code, rec.Body)
 	}
 	// troca senha e usuário
-	if err := a.ChangePassword("admin", "uma-senha-forte-1", "x"); err != ErrBadUser {
+	if _, err := a.ChangePassword("admin", "admin", "uma-senha-forte-1", "x"); err != ErrBadUser {
 		t.Fatalf("usuário curto: %v", err)
 	}
-	if err := a.ChangePassword("admin", "uma-senha-forte-1", "maria"); err != nil {
+	if _, err := a.ChangePassword("admin", "admin", "uma-senha-forte-1", "maria"); err != nil {
 		t.Fatal(err)
 	}
-	if a.MustChange() || a.Check("admin", "admin") || !a.Check("maria", "uma-senha-forte-1") {
+	if u, ok := a.Login("maria", "uma-senha-forte-1"); !ok || u.MustChange || canLogin(a, "admin", "admin") {
 		t.Fatal("depois da troca vale só o novo usuário e a nova senha")
 	}
 	// reinício: continua valendo o que foi gravado, mesmo com o .env vazio
-	b := NewAuth("", "", "s", true, store, false)
-	if b.MustChange() || !b.Check("maria", "uma-senha-forte-1") || b.Check("admin", "admin") {
+	b := NewAuth("", "", "s", true, dir, false)
+	if u, ok := b.Login("maria", "uma-senha-forte-1"); !ok || u.MustChange || canLogin(b, "admin", "admin") {
 		t.Fatal("o login trocado deveria sobreviver ao reinício")
 	}
 }
 
 func TestEnvPasswordNoForcedChange(t *testing.T) {
-	a := NewAuth("ana", "senha-do-env-ok", "s", true, filepath.Join(t.TempDir(), "auth.json"), false)
-	if a.MustChange() || !a.Check("ana", "senha-do-env-ok") {
-		t.Fatal("com senha no .env (como no servidor do autor) não há troca obrigatória")
+	a := NewAuth("ana", "senha-do-env-ok", "s", true, t.TempDir(), false)
+	if u, ok := a.Login("ana", "senha-do-env-ok"); !ok || u.MustChange {
+		t.Fatal("com senha no .env não há troca obrigatória")
 	}
-	f := NewAuth("admin", "inicial-gerada", "s", true, filepath.Join(t.TempDir(), "auth.json"), true)
-	if !f.MustChange() {
+	f := NewAuth("admin", "inicial-gerada", "s", true, t.TempDir(), true)
+	if u, _ := f.Login("admin", "inicial-gerada"); !u.MustChange {
 		t.Fatal("com VPMON_FORCE_PASSWORD_CHANGE=true a senha do instalador deve ser trocada")
 	}
 }
@@ -222,9 +229,7 @@ func TestAISettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	auth := NewAuth("u", "senha-muito-boa", "s", true, "", false)
 	h := New(nil, auth, true, env, path, nil).Handler()
-	rec := httptest.NewRecorder()
-	auth.Issue(rec)
-	ck := rec.Result().Cookies()[0]
+	ck := sessionCookie(auth, "u")
 	post := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "/api/settings/ai", strings.NewReader(body))
 		req.Header.Set("X-Requested-With", "vpmon")

@@ -144,7 +144,7 @@ func main() {
 		slog.Info("IA pelo .env", "modelo", aiCfg.Model, "url", aiCfg.URL())
 	}
 
-	auth := web.NewAuth(user, pass, secret, env("VPMON_COOKIE_SECURE", "true") == "true", filepath.Join(dataDir, "auth.json"), forceChange)
+	auth := web.NewAuth(user, pass, secret, env("VPMON_COOKIE_SECURE", "true") == "true", dataDir, forceChange)
 	srv := &http.Server{
 		Addr:              listen,
 		Handler:           web.New(mon, auth, env("VPMON_TRUST_CF", "true") == "true", aiCfg, filepath.Join(dataDir, "settings.json"), nt).Handler(),

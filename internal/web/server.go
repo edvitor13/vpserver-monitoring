@@ -146,19 +146,29 @@ func apiError(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": msg}})
 }
 
+type ctxKey struct{}
+
+// private exige sessão válida e põe o usuário no contexto (veja userOf).
 func (s *Server) private(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.auth.Valid(r) {
+		u, ok := s.auth.Session(r)
+		if !ok {
 			apiError(w, http.StatusUnauthorized, "login_required", "Entre de novo para continuar.")
 			return
 		}
-		// senha inicial (admin/admin ou a do instalador): nada além de trocar a senha
-		if s.auth.MustChange() && r.URL.Path != "/api/me" && r.URL.Path != "/api/password" {
-			apiError(w, http.StatusForbidden, "password_change_required", "Troque a senha inicial para continuar.")
+		// senha inicial ou provisória: nada além de trocar a senha
+		if u.MustChange && r.URL.Path != "/api/me" && r.URL.Path != "/api/password" {
+			apiError(w, http.StatusForbidden, "password_change_required", "Troque a senha provisória para continuar.")
 			return
 		}
-		h(w, r)
+		h(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
 	}
+}
+
+// userOf é o usuário logado (só dentro de rotas private).
+func userOf(r *http.Request) User {
+	u, _ := r.Context().Value(ctxKey{}).(User)
+	return u
 }
 
 // origin é o endereço por onde o navegador abriu o painel. Atrás da Cloudflare
@@ -216,7 +226,8 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_request", "Dados inválidos.")
 		return
 	}
-	if !s.auth.Check(body.User, body.Password) {
+	u, ok := s.auth.Login(body.User, body.Password)
+	if !ok {
 		s.auth.Fail(ip)
 		slog.Warn("login falhou", "ip", ip)
 		s.security("login_fail", ip)
@@ -225,10 +236,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auth.Reset(ip)
-	s.auth.Issue(w)
-	slog.Info("login", "ip", ip)
+	s.auth.Issue(w, u.Name)
+	s.auth.MarkLogin(u.Name)
+	slog.Info("login", "ip", ip, "usuario", u.Name)
 	s.security("login", ip)
-	writeJSON(w, http.StatusOK, map[string]any{"user": s.auth.User(), "mustChange": s.auth.MustChange()})
+	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "mustChange": u.MustChange})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -244,9 +256,11 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if s.nt != nil {
 		s.nt.SeenOrigin(s.origin(r))
 	}
-	src, changed := s.auth.PasswordInfo()
-	writeJSON(w, http.StatusOK, map[string]any{"user": s.auth.User(), "passwordSource": src,
-		"passwordChanged": changed, "mustChange": s.auth.MustChange()})
+	u := userOf(r)
+	src, changed := s.auth.PasswordInfo(u)
+	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "passwordSource": src,
+		"passwordChanged": changed, "mustChange": u.MustChange,
+		"admin": u.Admin, "actions": u.CanAct(), "manage": u.CanManage()})
 }
 
 // changePassword troca a senha (e, se pedido, o usuário) pela tela. Confere a
@@ -272,7 +286,8 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_request", "Dados inválidos.")
 		return
 	}
-	switch err := s.auth.ChangePassword(body.Current, body.New, body.User); err {
+	u, err := s.auth.ChangePassword(userOf(r).Name, body.Current, body.New, body.User)
+	switch err {
 	case nil:
 	case ErrBadCurrent:
 		s.auth.Fail(ip)
@@ -285,7 +300,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	case ErrSame:
 		apiError(w, http.StatusBadRequest, "same_password", "A nova senha é igual à atual.")
 		return
-	case ErrBadUser:
+	case ErrBadUser, ErrUserExists:
 		apiError(w, http.StatusBadRequest, "bad_user", err.Error())
 		return
 	default:
@@ -294,10 +309,10 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auth.Reset(ip)
-	s.auth.Issue(w)
-	slog.Info("senha trocada pela tela", "ip", ip, "usuario", s.auth.User())
+	s.auth.Issue(w, u.Name)
+	slog.Info("senha trocada pela tela", "ip", ip, "usuario", u.Name)
 	s.security("password", ip)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": s.auth.User()})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": u.Name})
 }
 
 // --- dados -----------------------------------------------------------------------------

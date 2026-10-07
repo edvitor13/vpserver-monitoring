@@ -8,19 +8,14 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
-// Senha trocada pela tela: guardada só como hash PBKDF2-SHA256 em
-// <data>/auth.json. Enquanto o arquivo existir, ele vale mais que o
-// VPMON_PASSWORD do .env; `server.py password` apaga o arquivo (esqueci a senha).
+// Senhas guardadas só como hash PBKDF2-SHA256 (users.json). O auth.json era o
+// formato de antes dos usuários (um login só): só é lido para migrar.
 
 const pbkdf2Iter = 310000 // recomendação OWASP para PBKDF2-HMAC-SHA256
 
@@ -78,6 +73,7 @@ func VerifyPassword(hash, pass string) bool {
 	return subtle.ConstantTimeCompare(pbkdf2([]byte(pass), salt, iter, len(want)), want) == 1
 }
 
+// storedAuth é o auth.json antigo.
 type storedAuth struct {
 	User    string `json:"user,omitempty"`
 	Hash    string `json:"hash"`
@@ -91,56 +87,4 @@ func loadStored(path string) (storedAuth, bool) {
 		return s, false
 	}
 	return s, true
-}
-
-func saveStored(path string, s storedAuth) error {
-	b, _ := json.Marshal(s)
-	tmp := filepath.Join(filepath.Dir(path), ".auth.tmp")
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-var (
-	ErrBadCurrent = errors.New("a senha atual não confere")
-	ErrWeak       = errors.New("a nova senha precisa ter pelo menos 10 caracteres")
-	ErrSame       = errors.New("a nova senha é igual à atual")
-	ErrBadUser    = errors.New("usuário inválido: use de 3 a 32 letras, números, ponto, hífen ou _")
-	ErrNoStore    = errors.New("o painel está sem pasta de dados; troque pelo server.py")
-)
-
-var validUser = regexp.MustCompile(`^[A-Za-z0-9._-]{3,32}$`)
-
-// ChangePassword troca a senha (confere a atual antes) e, se vier, o usuário.
-// Grava só o hash. Todas as sessões caem, porque a chave do cookie muda.
-func (a *Auth) ChangePassword(current, next, newUser string) error {
-	if a.storePath == "" {
-		return ErrNoStore
-	}
-	if !a.checkPass(current) {
-		return ErrBadCurrent
-	}
-	if len([]rune(next)) < 10 {
-		return ErrWeak
-	}
-	if next == current {
-		return ErrSame
-	}
-	user := a.User()
-	if newUser = strings.TrimSpace(newUser); newUser != "" {
-		if !validUser.MatchString(newUser) {
-			return ErrBadUser
-		}
-		user = newUser
-	}
-	s := storedAuth{User: user, Hash: HashPassword(next), Changed: time.Now().Unix()}
-	if err := saveStored(a.storePath, s); err != nil {
-		return err
-	}
-	a.mu.Lock()
-	a.user, a.hash, a.changed, a.mustChange = user, s.Hash, s.Changed, false
-	a.key = deriveKey(a.secret, user, s.Hash)
-	a.mu.Unlock()
-	return nil
 }
