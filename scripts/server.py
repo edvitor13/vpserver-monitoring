@@ -38,6 +38,7 @@ import secrets
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -86,12 +87,24 @@ def remote(script, *, capture=False, timeout=None):
 
 
 def git_version():
+    """(versão, commit, data). Deploy manual: <última versão>-dev.<commit>[-dirty]."""
+    def git(*a):
+        return subprocess.run(["git", *a], cwd=REPO, capture_output=True, text=True).stdout.strip()
     try:
-        v = subprocess.run(["git", "rev-parse", "--short=7", "HEAD"], cwd=REPO, capture_output=True, text=True, check=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=REPO, capture_output=True, text=True).stdout.strip()
-        return v + ("-dirty" if dirty else "")
+        sha = git("rev-parse", "--short=7", "HEAD")
+        if not sha:
+            raise ValueError
+        last = git("describe", "--tags", "--abbrev=0", "--match", "v[0-9]*") or "v0.0.0"
+        exact = git("tag", "--points-at", "HEAD", "--list", "v[0-9]*")
+        dirty = git("status", "--porcelain")
+        if exact and not dirty:
+            version = exact.splitlines()[-1][1:]
+        else:
+            version = f"{last[1:]}-dev.{sha}" + ("-dirty" if dirty else "")
+        built = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        return version, sha, built
     except Exception:
-        return "manual"
+        return "manual", "", ""
 
 
 # --- estado -------------------------------------------------------------------------
@@ -125,12 +138,13 @@ def cmd_logs(a):
 
 # --- deploy ----------------------------------------------------------------------------
 
-def build_package(version):
+def build_package(version, commit="", built=""):
     out = REPO / "dist"
     out.mkdir(exist_ok=True)
     env = dict(os.environ, CGO_ENABLED="0", GOOS="linux", GOARCH="arm64")
     print("==> compilando (linux/arm64)…")
-    subprocess.run(["go", "build", "-trimpath", "-ldflags", f"-s -w -X main.version={version}",
+    flags = f"-s -w -X main.version={version} -X main.commit={commit} -X main.built={built}"
+    subprocess.run(["go", "build", "-trimpath", "-ldflags", flags,
                     "-o", str(out / "vpmon"), "./cmd/vpmon"], cwd=REPO, env=env, check=True)
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
@@ -145,8 +159,8 @@ def build_package(version):
 
 
 def cmd_deploy(_):
-    version = git_version()
-    pkg = build_package(version)
+    version, commit, built = git_version()
+    pkg = build_package(version, commit, built)
     print(f"==> enviando {len(pkg) / 1e6:.1f} MB (versão {version})")
     p = subprocess.run(ssh_base() + [f"{BASE}/bin/receive"], input=pkg)
     sys.exit(p.returncode)

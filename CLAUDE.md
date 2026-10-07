@@ -14,6 +14,9 @@ mesma entrega quando são do mesmo assunto; assunto novo ganha issue própria.
 1. **Issue no GitHub antes de mexer**, em português: contexto, **Pedido**,
    **Como fazer** (o plano, por partes) e **Pronto quando** (lista de
    verificação). Use os rótulos `enhancement`, `bug` ou `documentation`.
+   **A etiqueta do PR decide a versão** que o CI cria no merge: `breaking` →
+   maior, `enhancement` → menor, qualquer outra → correção. Ponha no PR a
+   mesma etiqueta da issue (e `breaking` se mudar algo incompatível).
 2. **Branch** a partir da `master`: `feat/<assunto>`, `fix/<assunto>` ou
    `docs/<assunto>`.
 3. **Um commit por parte**, em inglês, minúsculo e curto no título
@@ -24,9 +27,11 @@ mesma entrega quando são do mesmo assunto; assunto novo ganha issue própria.
 4. **PR** em português, com as seções: Resumo, O que mudou (por parte), Como
    testar, Segurança e riscos, Commits (a lista) e `Closes #N`.
 5. **Merge** com `gh pr merge <N> --merge --delete-branch`. O push na `master`
-   testa, publica a imagem no ghcr.io e faz o deploy sozinho (GitHub Actions).
-6. **Conferir em produção:** o CI verde (test, image, deploy), o `/healthz` e
-   a função nova funcionando de verdade. Diga o que foi conferido e o que não.
+   testa, cria a versão (tag + Release), publica a imagem no ghcr.io e faz o
+   deploy sozinho (GitHub Actions). Nunca crie tag ou Release à mão.
+6. **Conferir em produção:** o CI verde (test, version, image, deploy), a
+   versão nova no `X-VPMon-Version`, o `/healthz` e a função nova funcionando de
+   verdade. Diga o que foi conferido e o que não.
 
 ## O repositório é público
 

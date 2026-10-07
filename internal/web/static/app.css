@@ -405,7 +405,8 @@ code { font-family: var(--mono); font-size: .9em; background: var(--surface-3); 
   .top .tabs { display: none; }
   .top-in { padding-bottom: 10px; }
   .bar-actions .icon-btn { display: none; } /* tema, configurações e sair ficam no "Mais" */
-  main { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+  main { padding-bottom: 12px; }
+  .foot:not(.foot-login) { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
   .bnav {
     display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
     background: color-mix(in srgb, var(--surface) 92%, transparent);
@@ -655,3 +656,17 @@ a.btn { text-decoration: none; color: inherit; }
 @media (min-width: 960px) { .us-grid { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); } }
 .us-grid .ulist { margin-bottom: 0; }
 .us-h { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.05rem; }
+
+/* ---------- rodapé: versão (data no passar do mouse ou no toque) ---------- */
+.foot { max-width: 1320px; margin: 0 auto; padding: 0 16px 28px; display: flex; justify-content: center; align-items: center; gap: 14px; font-size: .78rem; color: var(--muted); }
+.foot-login { padding: 18px 0 0; }
+.login { grid-template-rows: auto auto; align-content: center; }
+.ver-wrap { position: relative; display: inline-flex; }
+.ver { background: none; border: 0; padding: 4px 6px; margin: 0; color: inherit; font: inherit; cursor: help; border-radius: 6px; }
+.ver:hover, .ver:focus-visible { color: var(--text); background: var(--surface-2); outline: none; }
+.ver-tip { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); white-space: nowrap; z-index: 40;
+  background: var(--text); color: var(--bg); padding: 6px 10px; border-radius: 8px; font-size: .76rem; box-shadow: var(--shadow);
+  opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .12s; }
+.ver-wrap:hover .ver-tip, .ver:focus + .ver-tip { opacity: 1; visibility: visible; }
+.ver-new { color: inherit; }
+.ver-new:hover { color: var(--accent); }

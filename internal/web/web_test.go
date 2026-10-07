@@ -288,6 +288,31 @@ func TestVersionStamp(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("app.js?v=: %d", rec.Code)
 	}
+	if strings.Contains(body, "vpmon-built") || strings.Contains(body, "vpmon-commit") {
+		t.Fatal("sem data e commit conhecidos, sem as metas")
+	}
+
+	// commit e data da versão vão para o rodapé (só no formato certo, carimbado uma vez)
+	h = New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil, nil).
+		WithBuild("e7e483f", "2026-10-07T16:14:16Z").WithBuild("e7e483f", "2026-10-07T16:14:16Z").Handler()
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	body = rec.Body.String()
+	for _, want := range []string{`<meta name="vpmon-commit" content="e7e483f">`, `<meta name="vpmon-built" content="2026-10-07T16:14:16Z">`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("index sem %q", want)
+		}
+	}
+	if strings.Count(body, "app.js?v=") != 1 || strings.Count(body, "vpmon-version") != 1 {
+		t.Fatal("carimbou duas vezes")
+	}
+	h = New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil, nil).
+		WithBuild(`x"><script>`, "ontem").Handler()
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	if strings.Contains(rec.Body.String(), "vpmon-commit") || strings.Contains(rec.Body.String(), "vpmon-built") {
+		t.Fatal("valores fora do formato não entram no HTML")
+	}
 }
 
 // O que o navegador precisa para oferecer "instalar app": manifesto com os

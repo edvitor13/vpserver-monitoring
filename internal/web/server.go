@@ -36,8 +36,11 @@ type Server struct {
 	assets    map[string]asset
 	ai        *aiState // IA: configurada pela tela ou pelo .env (DEEPSEEK_*)
 	chatLimit chatLimiter
-	nt        *notify.Service  // notificações pelo WhatsApp (nil = sem)
-	version   string           // versão do painel: vai no index.html e no X-VPMon-Version
+	nt        *notify.Service // notificações pelo WhatsApp (nil = sem)
+	version   string          // versão do painel: vai no index.html e no X-VPMon-Version
+	commit    string          // commit e data da versão (rodapé)
+	built     string
+	rawIndex  []byte           // index.html sem carimbo
 	fl        *fleet.Fleet     // vários servidores: central e/ou conectado a um central (nil = sem)
 	cl        *cleanup.Service // tela Limpeza (nil = sem)
 	sendLimit chatLimiter      // "enviar agora" da aba Notificações
@@ -78,6 +81,9 @@ func New(mon *monitor.Monitor, auth *Auth, trustCF bool, envAI ai.Config, settin
 		s.assets["/"+p] = asset{body: b, ctype: ct, etag: `"` + hex.EncodeToString(sum[:8]) + `"`}
 		return nil
 	})
+	if a, ok := s.assets["/index.html"]; ok {
+		s.rawIndex = a.body
+	}
 	s.stampIndex()
 	return s
 }
@@ -145,19 +151,45 @@ func (s *Server) Handler() http.Handler {
 
 var safeVersion = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
-// stampIndex põe a versão no index.html: na meta vpmon-version (a tela
-// compara com a do servidor) e nos endereços dos arquivos (?v=), para o
-// navegador nunca juntar uma página nova com um app.js velho.
+var (
+	safeCommit = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+	safeDate   = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(Z|[+-][0-9]{2}:[0-9]{2})$`)
+)
+
+// WithBuild informa o commit e a data da versão (vão para o rodapé da tela).
+// Valores fora do formato são ignorados.
+func (s *Server) WithBuild(commit, built string) *Server {
+	if safeCommit.MatchString(commit) {
+		s.commit = commit
+	}
+	if safeDate.MatchString(built) {
+		s.built = built
+	}
+	s.stampIndex()
+	return s
+}
+
+// stampIndex põe a versão no index.html: nas metas vpmon-version (a tela
+// compara com a do servidor), vpmon-commit e vpmon-built (rodapé) e nos
+// endereços dos arquivos (?v=), para o navegador nunca juntar uma página nova
+// com um app.js velho.
 func (s *Server) stampIndex() {
 	a, ok := s.assets["/index.html"]
-	if !ok {
+	if !ok || s.rawIndex == nil {
 		return
 	}
-	html := string(a.body)
+	html := string(s.rawIndex)
 	for _, f := range []string{"app.js", "app.css", "theme.js", "uPlot.iife.min.js", "uPlot.min.css", "manifest.webmanifest"} {
 		html = strings.ReplaceAll(html, `"`+f+`"`, `"`+f+"?v="+s.version+`"`)
 	}
-	html = strings.Replace(html, `<meta charset="utf-8">`, `<meta charset="utf-8">`+"\n"+`<meta name="vpmon-version" content="`+s.version+`">`, 1)
+	meta := `<meta name="vpmon-version" content="` + s.version + `">`
+	if s.commit != "" {
+		meta += "\n" + `<meta name="vpmon-commit" content="` + s.commit + `">`
+	}
+	if s.built != "" {
+		meta += "\n" + `<meta name="vpmon-built" content="` + s.built + `">`
+	}
+	html = strings.Replace(html, `<meta charset="utf-8">`, `<meta charset="utf-8">`+"\n"+meta, 1)
 	sum := sha256.Sum256([]byte(html))
 	s.assets["/index.html"] = asset{body: []byte(html), ctype: a.ctype, etag: `"` + hex.EncodeToString(sum[:8]) + `"`}
 }

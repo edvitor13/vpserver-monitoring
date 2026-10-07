@@ -4,13 +4,13 @@
 # distroless "static" (~2 MB + o binário), roda como usuário sem privilégio.
 FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS build
 ARG TARGETOS TARGETARCH
-ARG VERSION=dev
+ARG VERSION=dev COMMIT= BUILT=
 WORKDIR /src
 COPY go.mod ./
 COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o /out/vpmon ./cmd/vpmon
+    go build -trimpath -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.built=$BUILT" -o /out/vpmon ./cmd/vpmon
 
 FROM gcr.io/distroless/static-debian12:nonroot
 LABEL org.opencontainers.image.source="https://github.com/edvitor13/vpserver-monitoring" \
