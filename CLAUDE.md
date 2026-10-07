@@ -70,9 +70,14 @@ mesma entrega quando são do mesmo assunto; assunto novo ganha issue própria.
   publicada** (acesso só pelo túnel da Cloudflare). Nunca `prune` global,
   `compose down -v` nem comando em outro projeto.
 - **Docker só pelo proxy** (`vpserver-dockerproxy`): leitura e, de escrita,
-  apenas pausar/retomar contêiner (`POST /containers/<id>/pause|unpause`). O
-  próprio painel nunca pode ser pausado. Acrescentar qualquer outra escrita é
-  decisão do dono do projeto, não da IA.
+  apenas pausar/retomar contêiner (`POST /containers/<id>/pause|unpause`) e as
+  duas limpezas seguras (`POST /build/prune`, `/images/prune` só com
+  `dangling=true`). O próprio painel nunca pode ser pausado. Acrescentar qualquer
+  outra escrita é decisão do dono do projeto, não da IA.
+- **Limpeza** (`internal/cleanup`): só o que não afeta as apps; nunca volume,
+  contêiner, rede, imagem com nome ou em uso. Logs só pelo `vpserver-cleaner`
+  (sem rede, só IDs de 64 hex, só `*-json.log*`). A IA **não roda limpeza** em
+  servidor de verdade para testar: use o Docker falso e o script com `sh`.
 - Pausar é escolha, não problema: contêiner pausado não vira alerta.
 - Testes que mexem em contêiner no servidor usam um contêiner descartável
   (`vpserver-pausetest`), nunca uma app de verdade.
