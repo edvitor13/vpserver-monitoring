@@ -308,7 +308,10 @@ novo se piorar (alerta → urgente) e, se quiser, quando resolve. Urgente que co
 
 **Horários:** os resumos e análises saem no horário escolhido (padrão 08:00, no fuso
 `VPMON_TZ`). No **horário de silêncio** (padrão 22:00–07:00) só o urgente sai na hora; o
-resto chega numa mensagem só quando o silêncio acaba. No máximo 30 mensagens por hora.
+resto chega numa mensagem só quando o silêncio acaba. **Limite:** no máximo 30 mensagens
+por hora por padrão (Notificações → Horários e limite, de 5 a 500). Vale para tudo que sai
+por este WhatsApp, inclusive os avisos dos servidores conectados; muito acima de 30 aumenta
+o risco de o WhatsApp bloquear o número.
 
 **Se o WhatsApp cair**, nada se perde: os alertas ficam esperando e saem quando
 reconectar, e a aba Infos avisa que as notificações estão paradas. O botão **Enviar
@@ -379,13 +382,17 @@ pode atender todos os servidores. Num servidor conectado com token liberado, lig
 **Mandar os avisos daqui pelo WhatsApp do central** (Servidores). A aba Notificações dele
 continua decidindo **o que** avisar e **quando** (tipos, silêncio, limite), mas as
 mensagens saem pelo WhatsApp do central, **só para os destinos do central**, com
-"Servidor conectado: nome" no fim. O servidor conectado não precisa do WhatsApp próprio
+"Servidor conectado: nome" no fim, até o **limite daquele servidor** (padrão 30 por hora). No
+central, em Servidores → **Ajustar**, dá para ligar/desligar o WhatsApp de cada servidor e
+mudar o limite dele a qualquer momento, sem trocar o token (vale em até 1 minuto); a linha
+mostra quanto ele usou na última hora. Os avisos emprestados também contam no limite geral
+do WhatsApp do central. O servidor conectado não precisa do WhatsApp próprio
 (dá para tirar `whatsapp` do `COMPOSE_PROFILES` dele).
 
 **Segurança:** o token tem 256 bits aleatórios, fica no central só como hash
 (`/data/fleet-central.json`, 600) e no servidor conectado em `/data/fleet-remote.json`
 (600). Um token vazado só permite mandar resumos falsos daquele servidor e, se liberado,
-até 30 avisos por hora **para os destinos do central** (nunca para números escolhidos por
+até o limite daquele servidor (padrão 30) por hora **para os destinos do central** (nunca para números escolhidos por
 quem tem o token), sempre com o nome do servidor no fim. O central limita o tamanho de
 tudo que recebe e só aceita links `http(s)` no "Abrir painel". O que o central vê e faz no
 outro servidor depende só do que **o dono do outro servidor** liberou, e um token vazado não
@@ -1024,7 +1031,7 @@ validada para daltonismo nos dois temas. Status sempre com ícone + texto.
 `/api/apps/pause` (ações); `GET/POST /api/users`, `POST /api/users/update|reset|delete|2fa-off`
 (gestão de usuários); `GET /api/cleanup`, `POST /api/cleanup/run|auto` (limpeza; o `run` exige
 `"confirm": true`); `/api/settings*` e `/api/notify*` (administradores); `GET /api/fleet/servers`
-(cards da aba Servidores), `GET /api/fleet`, `POST /api/fleet/tokens|tokens/revoke|connect|disconnect|whatsapp`
+(cards da aba Servidores), `GET /api/fleet`, `POST /api/fleet/tokens|tokens/update|tokens/revoke|connect|disconnect|whatsapp`
 (administradores). Entre painéis, sem cookie e com `Authorization: Bearer vps_…`:
 `POST /api/fleet/report` (resumo por minuto), `/api/fleet/notify` (aviso pelo WhatsApp do central),
 `/api/fleet/bye` (desconexão), `/api/fleet/poll` (pedido aberto, até 25 s) e `/api/fleet/reply`
