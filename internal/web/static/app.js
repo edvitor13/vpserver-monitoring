@@ -98,6 +98,7 @@
     plus: '<path d="M12 5v14M5 12h14"/>',
     play: '<polygon points="6 4 20 12 6 20 6 4"/>',
     user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
+    shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
   };
   const icon = (n, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[n] || ''}</svg>`;
   const STATUS = { ok: ['ok', 'OK'], warn: ['warn', 'Atenção'], crit: ['crit', 'Crítico'], info: ['info', 'Info'], off: ['pause', 'Parado'] };
@@ -142,7 +143,7 @@
     if (opts.body) headers['Content-Type'] = 'application/json';
     const r = await fetch(path, { credentials: 'same-origin', ...opts, headers });
     const j = await r.json().catch(() => ({}));
-    if (r.status === 401 && path !== '/api/login') {
+    if (r.status === 401 && !path.startsWith('/api/login')) {
       showLogin();
       throw new Error('login');
     }
@@ -301,6 +302,7 @@
       btn.disabled = true;
       try {
         const j = await api('/api/login', { method: 'POST', body: JSON.stringify({ user: $('#lu').value.trim(), password: $('#lp').value }) });
+        if (j.need2fa) { show2FAStep(j.ticket, j.user, $('#lp').value); return; }
         if (j.mustChange) showSetup($('#lp').value);
         else start();
       } catch (err) {
@@ -309,6 +311,170 @@
         $('#lp').select();
       }
     });
+  }
+
+  // segundo passo do login: o código do app autenticador (ou um de recuperação)
+  function show2FAStep(ticket, user, typedPass) {
+    const card = $('.login-card');
+    let recovery = false;
+    const render = () => {
+      $('#login-form').outerHTML = `<form id="login-form" autocomplete="off">
+        <div><h2 class="tf-title">${icon('shield')}Verificação em duas etapas</h2>
+          <p class="muted tf-sub">${recovery ? `Digite um dos códigos de recuperação de <b>${esc(user)}</b> (cada um vale uma vez).`
+            : `Abra o app autenticador e digite o código de 6 dígitos de <b>VPServer</b> para <b>${esc(user)}</b>.`}</p></div>
+        <div class="field"><label for="tf-code">${recovery ? 'Código de recuperação' : 'Código do app'}</label>
+          <input class="input code-input" id="tf-code" ${recovery ? 'placeholder="xxxx-xxxx" autocapitalize="off" spellcheck="false"' : 'inputmode="numeric" autocomplete="one-time-code" placeholder="000 000"'} maxlength="12" required></div>
+        <label class="sw-l"><input class="sw" type="checkbox" id="tf-rem"><span>Lembrar este aparelho por 30 dias</span></label>
+        <div class="form-err" id="login-err" role="alert"></div>
+        <button class="btn primary" type="submit">Entrar</button>
+        <div class="tf-links"><button class="linkish" type="button" id="tf-alt">${recovery ? 'Usar o código do app' : 'Perdeu o celular? Usar um código de recuperação'}</button>
+          <button class="linkish" type="button" id="tf-back">Voltar</button></div></form>`;
+      $('#tf-code').focus();
+      $('#tf-alt').addEventListener('click', () => { recovery = !recovery; render(); });
+      $('#tf-back').addEventListener('click', () => showLogin());
+      $('#login-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = $('#login-form button[type=submit]');
+        btn.disabled = true;
+        try {
+          const j = await api('/api/login/2fa', { method: 'POST', body: JSON.stringify({ ticket, code: $('#tf-code').value, remember: $('#tf-rem').checked }) });
+          if (j.recoveryUsed) toast(`Código de recuperação usado. Sobram ${j.recoveryLeft}; gere novos em Configurações → Minha conta.`);
+          if (j.mustChange) showSetup(typedPass);
+          else start();
+        } catch (ex) {
+          if (/acabou/.test(ex.message)) { showLogin(ex.message); return; }
+          $('#login-err').textContent = ex.message;
+          btn.disabled = false;
+          $('#tf-code').select();
+        }
+      });
+    };
+    if (card) render();
+  }
+
+  // ------------------------------------------------------------------ verificação em duas etapas (ativar, códigos, desligar)
+  let qrLib;
+  function loadQR() { // qrcode-generator (MIT), só quando precisa
+    if (window.qrcode) return Promise.resolve(window.qrcode);
+    if (!qrLib) {
+      qrLib = new Promise((resolve, reject) => {
+        const sc = document.createElement('script');
+        sc.src = 'qrcode.js';
+        sc.onload = () => resolve(window.qrcode);
+        sc.onerror = () => { qrLib = null; reject(new Error('não consegui carregar o gerador de QR')); };
+        document.head.append(sc);
+      });
+    }
+    return qrLib;
+  }
+  async function qrSVG(text) {
+    const qr = await loadQR();
+    const q = qr(0, 'M');
+    q.addData(text);
+    q.make();
+    const n = q.getModuleCount(), m = 2;
+    let d = '';
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += `M${c + m} ${r + m}h1v1h-1z`;
+    return `<svg class="qr-svg" viewBox="0 0 ${n + 2 * m} ${n + 2 * m}" role="img" aria-label="QR code para o app autenticador" shape-rendering="crispEdges">
+      <rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+  }
+  // códigos de recuperação: mostrados uma vez, com copiar e baixar
+  function recoveryHTML(codes) {
+    return `<div class="tf-codes"><p><b>Guarde estes códigos de recuperação.</b> Cada um entra uma vez se você perder o celular; eles não aparecem de novo.</p>
+      <ol class="codes">${codes.map((c) => `<li><code>${esc(c)}</code></li>`).join('')}</ol>
+      <div class="controls"><button class="btn sm" type="button" data-copy="${esc(codes.join('\n'))}">Copiar</button>
+        <button class="btn sm" type="button" data-download="${esc(codes.join('\n'))}">Baixar (.txt)</button></div>
+      <label class="sw-l"><input class="sw" type="checkbox" id="tf-saved"><span>Guardei os códigos num lugar seguro</span></label>
+      <button class="btn primary" type="button" id="tf-done" disabled>Concluir</button></div>`;
+  }
+  function bindRecovery(root, onDone) {
+    $('#tf-saved', root).addEventListener('change', (e) => { $('#tf-done', root).disabled = !e.target.checked; });
+    $('#tf-done', root).addEventListener('click', onDone);
+  }
+  // ativação: QR (ou chave), confirmar com um código, códigos de recuperação
+  async function twoFAEnroll(root, onDone) {
+    root.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    let st;
+    try { st = await api('/api/2fa/setup', { method: 'POST', body: '{}' }); } catch (ex) {
+      if (ex.message !== 'login') root.innerHTML = `<div class="form-err">${esc(ex.message)}</div>`;
+      return;
+    }
+    const svg = await qrSVG(st.uri).catch(() => '<div class="note">Não deu para desenhar o QR: use a chave abaixo.</div>');
+    root.innerHTML = `<div class="tf-enroll">
+      <ol class="howto"><li>Instale um app autenticador no celular: Google Authenticator, Microsoft Authenticator, Authy, 1Password ou Aegis.</li>
+        <li>No app, adicione uma conta e <b>escaneie o QR code</b>.</li><li>Digite o código de 6 dígitos que o app mostrar.</li></ol>
+      <div class="tf-qr">${svg}</div>
+      <div class="tf-alt"><a class="btn sm" href="${esc(st.uri)}">${icon('phone')}Abrir no app (pelo celular)</a>
+        <details><summary>Não consegue escanear? Digite a chave no app</summary>
+          <div class="passline"><code class="tf-key">${esc(st.secret)}</code><button class="btn sm" type="button" data-copy="${esc(st.secret.replace(/ /g, ''))}">Copiar</button></div></details></div>
+      <form class="stack" id="tf-en" autocomplete="off"><div class="field"><label for="tf-c">Código do app</label>
+        <input class="input code-input" id="tf-c" inputmode="numeric" autocomplete="one-time-code" placeholder="000 000" maxlength="7" required></div>
+        <div class="form-err" id="tf-err" role="alert"></div><button class="btn primary" type="submit">Ativar</button></form></div>`;
+    $('#tf-c', root).focus();
+    $('#tf-en', root).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const j = await api('/api/2fa/enable', { method: 'POST', body: JSON.stringify({ code: $('#tf-c', root).value }) });
+        toast('Verificação em duas etapas ligada.');
+        root.innerHTML = recoveryHTML(j.codes);
+        bindRecovery(root, onDone);
+      } catch (ex) { if (ex.message !== 'login') $('#tf-err', root).textContent = ex.message; }
+    });
+  }
+  // seção "Verificação em duas etapas" de Minha conta
+  async function renderTwoFA(el) {
+    let me;
+    try { me = await api('/api/me'); S.me = me; } catch { return; }
+    const t = me.twoFA || {};
+    const head = `<h3>${icon('shield')}Verificação em duas etapas</h3>`;
+    if (!t.enabled) {
+      el.innerHTML = `${head}<p class="muted">${badge('off', 'Desligada')} Recomendado: além da senha, o painel pede um código do app autenticador do celular. Sem API externa nem custo.</p>
+        <button class="btn primary" type="button" id="tf-on">${icon('shield')}Ativar</button>`;
+      $('#tf-on', el).addEventListener('click', () => twoFAEnroll(el, () => renderTwoFA(el)));
+      return;
+    }
+    el.innerHTML = `${head}<p class="muted">${badge('ok', 'Ligada')} desde ${dt(t.since)} · ${t.recoveryLeft} código(s) de recuperação sobrando.</p>
+      <div class="controls"><button class="btn sm" type="button" id="tf-new">Novos códigos de recuperação</button>
+        <button class="btn sm" type="button" id="tf-off">Desligar</button></div><div id="tf-act"></div>`;
+    const act = $('#tf-act', el);
+    $('#tf-new', el).addEventListener('click', () => {
+      act.innerHTML = `<form class="stack" id="tf-nf"><div class="field"><label for="tf-nc">Código do app</label>
+        <input class="input code-input" id="tf-nc" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required></div>
+        <div class="form-err" id="tf-err" role="alert"></div><button class="btn primary" type="submit">Gerar novos códigos</button></form>`;
+      $('#tf-nc', act).focus();
+      $('#tf-nf', act).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          const j = await api('/api/2fa/recovery', { method: 'POST', body: JSON.stringify({ code: $('#tf-nc', act).value }) });
+          act.innerHTML = recoveryHTML(j.codes);
+          bindRecovery(act, () => renderTwoFA(el));
+        } catch (ex) { if (ex.message !== 'login') $('#tf-err', act).textContent = ex.message; }
+      });
+    });
+    $('#tf-off', el).addEventListener('click', () => {
+      act.innerHTML = `<form class="stack" id="tf-of"><p class="muted" style="margin:0">Para desligar, confirme com a senha e um código do app (ou de recuperação).</p>
+        <div class="field"><label for="tf-op">Senha</label><input class="input" id="tf-op" type="password" autocomplete="current-password" required></div>
+        <div class="field"><label for="tf-oc">Código</label><input class="input code-input" id="tf-oc" autocomplete="one-time-code" maxlength="12" required></div>
+        <div class="form-err" id="tf-err" role="alert"></div><button class="btn danger" type="submit">Desligar a verificação</button></form>`;
+      $('#tf-op', act).focus();
+      $('#tf-of', act).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try {
+          await api('/api/2fa/disable', { method: 'POST', body: JSON.stringify({ password: $('#tf-op', act).value, code: $('#tf-oc', act).value }) });
+          toast('Verificação em duas etapas desligada.');
+          renderTwoFA(el);
+        } catch (ex) { if (ex.message !== 'login') $('#tf-err', act).textContent = ex.message; }
+      });
+    });
+  }
+  // recomendação única depois do login, para quem ainda não ligou
+  async function recommend2FA() {
+    const ok = await confirmDialog({ title: 'Proteja o painel com a verificação em duas etapas', ok: 'Ativar agora',
+      body: `<p>Além da senha, o painel passa a pedir um código de 6 dígitos do app autenticador do seu celular (Google Authenticator, Authy, 1Password...).
+        Se alguém descobrir a senha, ainda não entra.</p><p>Leva um minuto. Dá para ligar ou desligar depois em <b>Configurações → Minha conta</b>.</p>` });
+    api('/api/2fa/dismiss', { method: 'POST', body: '{}' }).catch(() => {});
+    if (ok) openSettings('acesso', { enroll: true });
+    else toast('Tudo bem. Dá para ativar depois em Configurações → Minha conta.');
   }
 
   // ------------------------------------------------------------------ casca
@@ -896,7 +1062,7 @@
     let me = {};
     try { me = await api('/api/me'); } catch { return; }
     S.me = me;
-    const steps = me.admin ? ['Acesso', 'IA (opcional)', 'WhatsApp (opcional)'] : ['Crie sua senha'];
+    const steps = me.admin ? ['Acesso', 'Duas etapas', 'IA', 'WhatsApp'] : ['Crie sua senha', 'Duas etapas'];
     const shell = (step, body) => `<div class="login"><div class="card login-card settings-card">
       <div class="brand"><div class="brand-logo">${icon('logo')}</div>
         <div class="brand-txt"><div class="brand-name">VPServer</div><div class="brand-sub">Primeiro acesso</div></div></div>
@@ -908,15 +1074,27 @@
     $('#app').innerHTML = shell(1, `<h2 style="margin:14px 0 4px">Crie o seu acesso</h2>
       <p class="muted" style="margin:0 0 14px;font-size:.86rem">${esc(intro)}</p>
       ${accessFormHTML(me.user || 'admin', true)}`);
-    bindAccess(prefill, async () => {
-      if (!me.admin) { start(); return; } // IA e WhatsApp são do administrador
+    bindAccess(prefill, () => tfStep());
+    // passo 2: verificação em duas etapas (recomendado)
+    function tfStep() {
+      if ((me.twoFA || {}).enabled) { me.admin ? aiStep() : start(); return; } // já ligado (só trocou a senha)
+      $('#app').innerHTML = shell(2, `<h2 style="margin:14px 0 4px">${icon('shield')} Verificação em duas etapas <span class="badge ok">Recomendado</span></h2>
+        <p class="muted" style="margin:0 0 12px;font-size:.86rem">Além da senha, o painel pede um código do app autenticador do celular. Se alguém descobrir a senha, ainda não entra.</p>
+        <div id="tf-box"><button class="btn primary" type="button" id="tf-go">${icon('shield')}Ativar agora</button></div>
+        <div class="controls" style="margin-top:12px"><button class="btn" type="button" id="tf-skip">Pular por enquanto</button></div>
+        <p class="muted" style="margin:10px 0 0;font-size:.8rem">Dá para ligar ou desligar depois em <b>Configurações → Minha conta</b>.</p>`);
+      const next = () => (me.admin ? aiStep() : start()); // IA e WhatsApp são do administrador
+      $('#tf-go').addEventListener('click', () => { $('#tf-skip').closest('.controls').hidden = true; twoFAEnroll($('#tf-box'), next); });
+      $('#tf-skip').addEventListener('click', () => { api('/api/2fa/dismiss', { method: 'POST', body: '{}' }).catch(() => {}); next(); });
+    }
+    async function aiStep() {
       let st = { ai: { enabled: false } };
       try { st = await api('/api/settings'); } catch { /* segue */ }
-      $('#app').innerHTML = shell(2, `<h2 style="margin:14px 0 4px">Quer usar a IA?</h2>${aiFormHTML(st.ai, true)}
+      $('#app').innerHTML = shell(3, `<h2 style="margin:14px 0 4px">Quer usar a IA?</h2>${aiFormHTML(st.ai, true)}
         <p class="muted" style="margin:10px 0 0;font-size:.8rem">Dá para configurar depois em <b>Configurações</b> (ícone de engrenagem no topo).</p>`);
       bindAI(() => setTimeout(waStep, 900), waStep);
       $('#ai-k').focus();
-    });
+    }
     // passo 3: conectar o WhatsApp das notificações (se estiver instalado)
     async function waStep() {
       let j;
@@ -926,7 +1104,7 @@
         S.nt = n;
         const st = n.status;
         const own = st.state === 'open' && st.number && !n.config.recipients.length;
-        $('#app').innerHTML = shell(3, `<h2 style="margin:14px 0 4px">Avisos pelo WhatsApp?</h2>
+        $('#app').innerHTML = shell(4, `<h2 style="margin:14px 0 4px">Avisos pelo WhatsApp?</h2>
           <p class="muted" style="margin:0 0 12px;font-size:.86rem">O painel pode mandar alertas (app caiu, disco enchendo, limites do plano grátis) e um resumo diário pelo WhatsApp.</p>
           <div id="wa-box">${waBoxHTML(n)}</div>
           ${own ? `<form class="stack" id="su-to" style="margin-top:14px"><div class="field"><label for="su-num">Mandar os avisos para (com DDI)</label>
@@ -951,7 +1129,7 @@
   }
 
   // Configurações: Minha conta (todos), Usuários (quem gerencia), IA e WhatsApp (administradores).
-  async function openSettings(tab = 'acesso') {
+  async function openSettings(tab = 'acesso', opts = {}) {
     closeDrawer();
     let me = {}, st = { ai: { enabled: false } };
     try {
@@ -997,8 +1175,15 @@
         api('/api/notify').then((j) => render(j.notify)).catch((ex) => { if (ex.message !== 'login') body.innerHTML = `<div class="form-err">${esc(ex.message)}</div>`; });
       } else {
         const origin = me.passwordSource === 'panel' ? `Senha trocada pelo painel em ${dt(me.passwordChanged)}.` : 'Hoje vale a senha definida no .env do servidor.';
-        body.innerHTML = `<p class="muted" style="margin:0 0 12px;font-size:.84rem">${esc(origin)} Ao salvar, as outras sessões (outros aparelhos) saem.</p>${accessFormHTML(me.user, false)}`;
+        body.innerHTML = `<p class="muted" style="margin:0 0 12px;font-size:.84rem">${esc(origin)} Ao salvar, as outras sessões (outros aparelhos) saem.</p>${accessFormHTML(me.user, false)}
+          <section class="tf-section" id="tf-sec"></section>`;
         bindAccess('', (j) => { closeDrawer(); toast(`Acesso salvo (usuário ${j.user}). Os outros aparelhos vão precisar entrar de novo.`); });
+        const sec = $('#tf-sec', body);
+        if (opts.enroll && !(me.twoFA || {}).enabled) {
+          opts.enroll = false;
+          sec.scrollIntoView({ block: 'start' });
+          twoFAEnroll(sec, () => renderTwoFA(sec));
+        } else renderTwoFA(sec);
       }
     };
     S.settingsTab = show;
@@ -1031,9 +1216,10 @@
       const editable = (u) => u.name !== me.user && (me.admin || !u.admin);
       body.innerHTML = `${flash || ''}<div class="ulist">${j.users.map((u) => `<div class="urow" data-user="${esc(u.name)}">
           <div class="urow-h"><div class="urow-n"><span><b>${esc(u.name)}</b>${u.name === me.user ? ' <span class="muted">(você)</span>' : ''}</span>
-            <small>${esc(roleText(u))}${u.mustChange ? ' · senha provisória' : ''} · ${u.lastLogin ? `último acesso ${dt(u.lastLogin)}` : 'nunca entrou'}</small></div>
+            <small>${esc(roleText(u))}${u.twoFA ? ' · 2FA ligado' : ''}${u.mustChange ? ' · senha provisória' : ''} · ${u.lastLogin ? `último acesso ${dt(u.lastLogin)}` : 'nunca entrou'}</small></div>
             ${editable(u) ? `<div class="controls"><button class="btn sm" type="button" data-u="edit">Permissões</button>
               <button class="btn sm" type="button" data-u="reset">Nova senha</button>
+              ${u.twoFA ? '<button class="btn sm" type="button" data-u="tfoff">Desligar 2FA</button>' : ''}
               <button class="btn sm" type="button" data-u="del" aria-label="Remover ${esc(u.name)}">Remover</button></div>` : ''}</div>
           ${editable(u) ? `<div class="urow-edit" hidden>${permBoxes(u)}<div class="controls"><button class="btn primary sm" type="button" data-u="save">Salvar permissões</button></div></div>` : ''}
         </div>`).join('')}</div>
@@ -1062,11 +1248,6 @@
       });
     };
     body.onclick = async (e) => {
-      const cp = e.target.closest('[data-copy]');
-      if (cp) {
-        try { await navigator.clipboard.writeText(cp.dataset.copy); toast('Senha copiada.'); } catch { toast('Copie a senha manualmente.'); }
-        return;
-      }
       const b = e.target.closest('[data-u]');
       if (!b) return;
       const row = b.closest('.urow');
@@ -1080,6 +1261,14 @@
             body: `<p>O painel gera uma senha provisória e ${esc(name)} sai de todos os aparelhos. No próximo acesso, cria a própria senha.</p>` })) return;
           const r = await post('/api/users/reset');
           load(passBox(name, r.password));
+          return;
+        }
+        if (b.dataset.u === 'tfoff') {
+          if (!await confirmDialog({ title: `Desligar o 2FA de ${name}?`, ok: 'Desligar', danger: true,
+            body: `<p>Use quando a pessoa perdeu o celular. ${esc(name)} passa a entrar só com a senha até ligar de novo em Minha conta.</p>` })) return;
+          await post('/api/users/2fa-off');
+          toast(`2FA de ${name} desligado.`);
+          load();
           return;
         }
         if (b.dataset.u === 'del') {
@@ -1906,6 +2095,20 @@
 
   // ------------------------------------------------------------------ eventos globais
   document.addEventListener('click', async (e) => {
+    const cp = e.target.closest('[data-copy]');
+    if (cp) {
+      try { await navigator.clipboard.writeText(cp.dataset.copy); toast('Copiado.'); } catch { toast('Não deu para copiar: selecione e copie à mão.'); }
+      return;
+    }
+    const dl = e.target.closest('[data-download]');
+    if (dl) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([`VPServer: códigos de recuperação (${S.me ? S.me.user : ''})\n\n${dl.dataset.download}\n`], { type: 'text/plain' }));
+      a.download = 'vpserver-codigos-de-recuperacao.txt';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      return;
+    }
     const act = e.target.closest('[data-act]');
     const unit = e.target.closest('[data-unit]');
     if (act) {
@@ -1954,6 +2157,8 @@
     try { S.me = await api('/api/me'); } catch { return; }
     renderShell();
     route();
+    const t = S.me.twoFA || {};
+    if (!t.enabled && !t.asked) setTimeout(recommend2FA, 1500);
     await poll();
   }
   async function boot() {

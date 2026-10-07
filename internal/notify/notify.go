@@ -509,6 +509,21 @@ func (s *Service) Security(kind, ip, user string) {
 		if s.on("logins") {
 			m = &message{kind: "logins", title: "Login no painel: " + user, text: fmt.Sprintf("🔐 Login no painel: *%s* (IP %s).", user, ip)}
 		}
+	case "recovery_used":
+		if s.on("security") {
+			m = &message{kind: "security", urgent: true, title: "Código de recuperação usado: " + user,
+				text: fmt.Sprintf("🔐 *Segurança do painel*\n*%s* entrou com um código de recuperação (IP %s). Se não foi essa pessoa, troque a senha e o 2FA dela já.", user, ip)}
+		}
+	case "2fa_on":
+		if s.on("security") {
+			m = &message{kind: "security", title: "2FA ligado: " + user,
+				text: fmt.Sprintf("🔐 *Segurança do painel*\n*%s* ligou a verificação em duas etapas (IP %s).", user, ip)}
+		}
+	case "2fa_off":
+		if s.on("security") {
+			m = &message{kind: "security", urgent: true, title: "2FA desligado: " + user,
+				text: fmt.Sprintf("🔐 *Segurança do painel*\nA verificação em duas etapas de *%s* foi desligada (IP %s). Se não foi essa pessoa, troque a senha dela já.", user, ip)}
+		}
 	case "password":
 		if s.on("security") {
 			m = &message{kind: "security", urgent: true, title: "Senha trocada: " + user,

@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /", s.static)
 	mux.HandleFunc("POST /api/login", s.login)
+	mux.HandleFunc("POST /api/login/2fa", s.login2FA)
 	mux.HandleFunc("POST /api/logout", s.logout)
 	mux.HandleFunc("GET /api/me", s.private(s.me))
 	mux.HandleFunc("POST /api/password", s.private(s.changePassword))
@@ -107,6 +108,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/users/update", manage(s.usersUpdate))
 	mux.HandleFunc("POST /api/users/reset", manage(s.usersReset))
 	mux.HandleFunc("POST /api/users/delete", manage(s.usersDelete))
+	mux.HandleFunc("POST /api/users/2fa-off", manage(s.usersTwoFAOff))
+	// verificação em duas etapas de quem está logado
+	mux.HandleFunc("POST /api/2fa/setup", s.private(s.twofaSetup))
+	mux.HandleFunc("POST /api/2fa/enable", s.private(s.twofaEnable))
+	mux.HandleFunc("POST /api/2fa/disable", s.private(s.twofaDisable))
+	mux.HandleFunc("POST /api/2fa/recovery", s.private(s.twofaRecovery))
+	mux.HandleFunc("POST /api/2fa/dismiss", s.private(s.twofaDismiss))
 	return secureHeaders(withGzip(mux))
 }
 
@@ -245,12 +253,67 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusUnauthorized, "bad_credentials", "Usuário ou senha incorretos.")
 		return
 	}
+	if u.TOTP != nil && !s.auth.Trusted(r, u) {
+		// senha certa; falta o código do app (o bilhete liga uma coisa à outra por 5 min)
+		writeJSON(w, http.StatusOK, map[string]any{"need2fa": true, "ticket": s.auth.Ticket(u.Name), "user": u.Name})
+		return
+	}
 	s.auth.Reset(ip)
 	s.auth.Issue(w, u.Name)
 	s.auth.MarkLogin(u.Name)
 	slog.Info("login", "ip", ip, "usuario", u.Name)
 	s.security("login", ip, u.Name)
 	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "mustChange": u.MustChange})
+}
+
+// login2FA é o segundo passo: o código do app (ou um de recuperação).
+func (s *Server) login2FA(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		apiError(w, http.StatusForbidden, "bad_origin", "Requisição recusada.")
+		return
+	}
+	ip := clientIP(r, s.trustCF)
+	if blocked, wait := s.auth.Blocked(ip); blocked {
+		apiError(w, http.StatusTooManyRequests, "too_many_attempts",
+			"Muitas tentativas erradas. Tente de novo em "+strconv.Itoa(int(wait.Minutes())+1)+" min.")
+		return
+	}
+	var body struct {
+		Ticket   string `json:"ticket"`
+		Code     string `json:"code"`
+		Remember bool   `json:"remember"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		apiError(w, http.StatusBadRequest, "bad_request", "Dados inválidos.")
+		return
+	}
+	u, ok := s.auth.CheckTicket(body.Ticket)
+	if !ok {
+		apiError(w, http.StatusUnauthorized, "ticket_expired", "O tempo para digitar o código acabou. Entre de novo.")
+		return
+	}
+	used, left, err := s.auth.VerifySecond(u.Name, body.Code)
+	if err != nil {
+		s.auth.Fail(ip)
+		slog.Warn("código do 2FA errado", "ip", ip, "usuario", u.Name)
+		s.security("login_fail", ip, "")
+		time.Sleep(600 * time.Millisecond)
+		apiError(w, http.StatusUnauthorized, "bad_code", "Código inválido ou vencido.")
+		return
+	}
+	s.auth.Reset(ip)
+	s.auth.Issue(w, u.Name)
+	if body.Remember {
+		s.auth.IssueTrust(w, u.Name)
+	}
+	s.auth.MarkLogin(u.Name)
+	slog.Info("login com 2FA", "ip", ip, "usuario", u.Name, "com", used)
+	s.security("login", ip, u.Name)
+	if used == "recovery" {
+		s.security("recovery_used", ip, u.Name)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "mustChange": u.MustChange,
+		"recoveryUsed": used == "recovery", "recoveryLeft": left})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -270,7 +333,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	src, changed := s.auth.PasswordInfo(u)
 	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "passwordSource": src,
 		"passwordChanged": changed, "mustChange": u.MustChange,
-		"admin": u.Admin, "actions": u.CanAct(), "manage": u.CanManage()})
+		"admin": u.Admin, "actions": u.CanAct(), "manage": u.CanManage(), "twoFA": u.TwoFA()})
 }
 
 // changePassword troca a senha (e, se pedido, o usuário) pela tela. Confere a

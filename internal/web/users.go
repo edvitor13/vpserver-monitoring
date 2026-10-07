@@ -32,6 +32,9 @@ type User struct {
 	Changed    int64  `json:"changed,omitempty"` // última troca de senha pela tela
 	LastLogin  int64  `json:"lastLogin,omitempty"`
 	Epoch      string `json:"epoch,omitempty"` // muda junto com senha/permissões: derruba as sessões da pessoa
+
+	TOTP     *TOTPState `json:"totp,omitempty"`     // verificação em duas etapas (nil = desligada)
+	Asked2FA bool       `json:"asked2fa,omitempty"` // a recomendação de ligar o 2FA já foi feita
 }
 
 func (u User) CanAct() bool    { return u.Admin || u.Actions }
@@ -55,11 +58,12 @@ type UserView struct {
 	CreatedBy  string `json:"createdBy,omitempty"`
 	LastLogin  int64  `json:"lastLogin"`
 	EnvPass    bool   `json:"envPassword,omitempty"` // entra com a senha do .env
+	TwoFA      bool   `json:"twoFA"`
 }
 
 func (u User) View() UserView {
 	return UserView{Name: u.Name, Admin: u.Admin, Actions: u.CanAct(), Manage: u.CanManage(), MustChange: u.MustChange,
-		Created: u.Created, CreatedBy: u.CreatedBy, LastLogin: u.LastLogin, EnvPass: u.Hash == ""}
+		Created: u.Created, CreatedBy: u.CreatedBy, LastLogin: u.LastLogin, EnvPass: u.Hash == "", TwoFA: u.TOTP != nil}
 }
 
 type usersFile struct {
@@ -395,7 +399,8 @@ func (a *Auth) MarkLogin(name string) {
 
 // ResetPasswordOffline é o `vpmon reset-password <usuário>`: troca a senha de
 // alguém por uma provisória direto no users.json, com o painel rodando (ele
-// percebe a mudança no arquivo). Sem users.json, parte do admin do .env.
+// percebe a mudança no arquivo), e desliga o 2FA dessa pessoa (quem esqueceu
+// a senha pode ter perdido o celular também). Sem users.json, parte do admin do .env.
 func ResetPasswordOffline(dir, envUser, name string) (string, error) {
 	path := filepath.Join(dir, "users.json")
 	users, _, ok := readUsers(path)
@@ -411,7 +416,7 @@ func ResetPasswordOffline(dir, envUser, name string) (string, error) {
 		return "", fmt.Errorf("não existe o usuário %q (há: %s)", name, strings.Join(names, ", "))
 	}
 	pass := tempPassword()
-	users[i].Hash, users[i].MustChange, users[i].Epoch = HashPassword(pass), true, randomEpoch()
+	users[i].Hash, users[i].MustChange, users[i].Epoch, users[i].TOTP = HashPassword(pass), true, randomEpoch(), nil
 	if _, err := writeUsers(path, users); err != nil {
 		return "", err
 	}

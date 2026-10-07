@@ -44,6 +44,7 @@ aplicações (cada projeto do Docker Compose vira uma app).
 - [Notificações pelo WhatsApp](#notificações-pelo-whatsapp)
 - [Pausar e retomar uma aplicação](#pausar-e-retomar-uma-aplicação)
 - [Usuários e permissões](#usuários-e-permissões)
+- [Verificação em duas etapas](#verificação-em-duas-etapas)
 - [No celular](#no-celular)
 - [Como funciona](#como-funciona)
 - [Aplicações novas aparecem sozinhas](#aplicações-novas-aparecem-sozinhas)
@@ -122,16 +123,17 @@ docker compose up -d
 
 **4. Primeiro acesso:** usuário **`admin`** e a senha inicial do passo 1. O painel
 **obriga a trocar** a senha (e dá para trocar o usuário) antes de mostrar qualquer dado;
-depois pergunta se você quer ligar a **IA** com uma chave da DeepSeek e conectar o
-**WhatsApp** dos avisos (QR code). Os dois são opcionais e ficam em **Configurações**
+depois **recomenda a verificação em duas etapas** e pergunta se você quer ligar a **IA**
+com uma chave da DeepSeek e conectar o **WhatsApp** dos avisos (QR code). Os dois são opcionais e ficam em **Configurações**
 (ícone de engrenagem; no celular, em "Mais") e na aba **Notificações**.
 
 **Atualizar:** `cd /opt/vpserver-monitoring && docker compose pull && docker compose up -d`.
 Para receber um `compose.yml` novo, rode o `init` de novo (ele não mexe no seu `.env`).
 
 **Esqueci a senha:** `docker compose exec monitor /vpmon reset-password <usuário>`
-mostra uma senha provisória nova (no próximo acesso a pessoa cria a dela). Funciona com o
-painel rodando e não mexe nos outros usuários.
+mostra uma senha provisória nova (no próximo acesso a pessoa cria a dela) e desliga a
+verificação em duas etapas dela (quem perdeu a senha pode ter perdido o celular). Funciona
+com o painel rodando e não mexe nos outros usuários.
 
 **Remover:** `docker compose down` (e `sudo rm -rf /opt/vpserver-monitoring` para apagar
 histórico e senha). Nada fora dessa pasta e do projeto `vpserver-monitoring` é tocado.
@@ -282,7 +284,7 @@ primeiro acesso):
 | | Avisar quando resolver | ✓ |
 | Mudanças e segurança | Aplicação nova ou removida | ✓ |
 | | Aplicação atualizada (deploy) | |
-| | Segurança do painel (senhas erradas, troca de senha, usuários criados/removidos/alterados) | ✓ |
+| | Segurança do painel (senhas erradas, troca de senha, 2FA ligado/desligado, código de recuperação usado, usuários criados/removidos/alterados) | ✓ |
 | | Cada entrada no painel | |
 | | App pausada ou retomada pela tela (só um registro, com o IP) | |
 | Resumos | Resumo diário (ontem: CPU, memória, disco, banda, top apps, quedas) | ✓ |
@@ -341,6 +343,35 @@ administrador** é o do `.env` (`VPMON_USER`, ou `admin` na instalação nova).
 - **Onde fica:** `data/users.json` (600), com a senha só como hash. O `auth.json` de versões
   antigas vira o primeiro administrador sozinho (guardado como `auth.json.migrado`), sem
   derrubar a sessão aberta.
+
+---
+
+## Verificação em duas etapas
+
+Cada usuário pode ligar a **verificação em duas etapas** (2FA): além da senha, o painel pede
+um código de 6 dígitos do **app autenticador** do celular (Google Authenticator, Microsoft
+Authenticator, Authy, 1Password, Aegis...). Se alguém descobrir a senha, ainda não entra.
+
+- **Sem API externa, sem chave e sem custo:** é o padrão TOTP (RFC 6238). O painel gera um
+  segredo por usuário, guardado só no servidor (`data/users.json`), e o celular calcula o
+  mesmo código a cada 30 s, até sem internet.
+- **Ligar:** Configurações → **Minha conta** → *Ativar*: escaneie o QR code (no celular,
+  dá para tocar em "Abrir no app" ou digitar a chave), confirme com um código e **guarde os
+  10 códigos de recuperação** (copiar ou baixar), que aparecem uma vez só.
+- **Recomendação:** o primeiro acesso tem o passo "Duas etapas (Recomendado)", e quem já
+  usava o painel vê uma janela única depois do login. Os dois dá para pular.
+- **No login:** depois da senha, o código do app. "Lembrar este aparelho por 30 dias" pula o
+  código naquele navegador. Perdeu o celular? Entre com um **código de recuperação** (cada
+  um vale uma vez; o painel avisa quantos sobram e dá para gerar novos em Minha conta).
+- **Desligar:** Minha conta pede a senha e um código. Para quem perdeu o celular e os
+  códigos: um administrador desliga em Configurações → Usuários → *Desligar 2FA*, ou o
+  `reset-password` (ver "Esqueci a senha").
+- **Segurança:** o mesmo código não vale duas vezes, códigos errados entram no freio de
+  tentativas do login e ligar ou desligar derruba as outras sessões da pessoa. Com
+  "Segurança do painel" ligado nas Notificações, o WhatsApp avisa quando alguém liga ou
+  desliga o 2FA e quando um código de recuperação é usado.
+- O relógio do servidor precisa estar certo (as VMs da Oracle já sincronizam); o painel
+  aceita 30 s de diferença para cada lado.
 
 ---
 
@@ -610,6 +641,9 @@ requisição; requisição sem resposta cai em 100 s.
   10+ caracteres e permissões conferidas em toda rota da API (ver
   [Usuários e permissões](#usuários-e-permissões)). O tempo da resposta do login não
   revela quais nomes de usuário existem.
+- **Verificação em duas etapas** opcional por usuário (TOTP, códigos de recuperação de uso
+  único guardados só como hash, "lembrar este aparelho" com cookie próprio que muda com a
+  senha e o segredo). Ver [Verificação em duas etapas](#verificação-em-duas-etapas).
 - **Senha inicial com troca obrigatória:** o `init` gera uma senha aleatória para
   o usuário `admin`; sem nenhuma senha configurada, vale `admin`/`admin`. Nos dois
   casos, até trocar, a API só responde `/api/me` e `/api/password` (o resto dá
@@ -797,7 +831,9 @@ go run ./cmd/vpmon     # http://localhost:8080
 
 **Interface:** HTML/CSS/JS puros em `internal/web/static/`, embutidos no
 binário (`go:embed`). Sem build de front. Gráficos com
-[uPlot](https://github.com/leeoniya/uPlot) (MIT, ~50 KB, guardado no repo).
+[uPlot](https://github.com/leeoniya/uPlot) (MIT, ~50 KB) e o QR code do 2FA com
+[qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (MIT, carregado só na
+ativação), os dois guardados no repo.
 Cores sempre por variável CSS (`--s1`…`--s8` para séries, `--good`/`--warning`/
 `--critical` para estado), redefinidas no tema escuro. A paleta de séries é
 validada para daltonismo nos dois temas. Status sempre com ícone + texto.
@@ -807,7 +843,8 @@ validada para daltonismo nos dois temas. Status sempre com ícone + texto.
 `/api/history/apps?range=&f=cpu|mem|rx|tx|rd|wr`, `/api/history/unit?key=c:<nome>|s:<serviço>|app:<app>`,
 `/api/traffic`, `/api/logs?c=<contêiner>|*&tail=&errors=1`, `/api/logs/targets`,
 `/api/system`, `/api/me` (usuário e permissões); `POST /api/login`, `/api/logout`, `/api/password`,
-`/api/apps/pause` (ações); `GET/POST /api/users`, `POST /api/users/update|reset|delete`
+`/api/login/2fa` (segundo passo), `/api/2fa/setup|enable|disable|recovery|dismiss` (o próprio 2FA),
+`/api/apps/pause` (ações); `GET/POST /api/users`, `POST /api/users/update|reset|delete|2fa-off`
 (gestão de usuários); `/api/settings*` e `/api/notify*` (administradores).
 Períodos: `1h`, `6h`, `24h`, `7d`, `30d`, `1y`.
 Erros: `{"error": {"code": "...", "message": "..."}}`.

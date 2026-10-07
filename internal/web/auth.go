@@ -47,6 +47,10 @@ type Auth struct {
 	users []User
 	mtime time.Time // do users.json carregado (outro processo pode mudar: vpmon reset-password)
 
+	pendMu  sync.Mutex
+	pending map[string]pendingTOTP // 2FA esperando a confirmação (QR mostrado)
+	now     func() time.Time       // relógio do 2FA (trocável nos testes)
+
 	failMu sync.Mutex
 	fails  map[string][]time.Time
 }
@@ -67,7 +71,8 @@ func NewAuth(user, pass, secret string, secure bool, dir string, forceChange boo
 	if pass == "" {
 		pass, forceChange = DefaultPassword, true
 	}
-	a := &Auth{envUser: user, envPass: pass, secret: secret, secure: secure, dir: dir, fails: map[string][]time.Time{}}
+	a := &Auth{envUser: user, envPass: pass, secret: secret, secure: secure, dir: dir, fails: map[string][]time.Time{},
+		pending: map[string]pendingTOTP{}, now: time.Now}
 	if dir != "" {
 		a.path = filepath.Join(dir, "users.json")
 	}
