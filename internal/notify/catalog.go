@@ -25,6 +25,7 @@ var Catalog = []Kind{
 	{"limits", "alertas", "Limites do plano grátis", "Saída de dados perto do limite do mês, VM com cara de ociosa pela regra da Oracle ou shape que não é grátis.", true, false},
 	{"monitor", "alertas", "Problemas do próprio painel", "O painel perdeu o acesso ao Docker e parou de enxergar as aplicações.", true, false},
 	{"app_warn", "alertas", "Avisos menores das aplicações", "Contêiner perto do limite de memória, segurado no limite de CPU ou com muitos erros no log.", false, false},
+	{"backup", "alertas", "Backups dos bancos", "Quando o backup de um banco falha, atrasa (passou do dobro do intervalo sem um bom) e quando volta a funcionar.", true, false},
 	{"resolved", "alertas", "Avisar quando resolver", "Uma mensagem curta quando um alerta avisado deixa de valer.", true, false},
 
 	{"apps", "mudancas", "Aplicação nova ou removida", "Quando aparece um projeto novo no Docker do servidor, ou quando um some.", true, false},
@@ -85,6 +86,8 @@ func category(key, level string) (string, time.Duration) {
 		return "limits", 2 * time.Minute
 	case "monitor.docker":
 		return "monitor", 5 * time.Minute
+	case "backup.late":
+		return "backup", 5 * time.Minute
 	}
 	return "", 0
 }
