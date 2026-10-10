@@ -696,8 +696,27 @@
     && (!S.remote || (REMOTE_TABS.has(k) && (k !== 'logs' || S.remote.logs || S.remote.control))));
   const tabHref = (k) => `#/${k === 'overview' ? '' : k}`;
   const countHTML = (k) => (k === 'infos' ? '<span class="count infos-count" hidden></span>' : '');
+  // Menu de cima ou o de baixo (celular): o de baixo vale até 720 px e também quando as
+  // seções não cabem na largura (a medida é do menu de cima de verdade, com as seções que
+  // esta pessoa vê).
+  function fitNav() {
+    const root = document.documentElement;
+    const tabs = $('.top .tabs');
+    if (!tabs) { root.classList.remove('nav-compact'); return; }
+    const was = root.classList.contains('nav-compact');
+    let compact = window.innerWidth <= 720;
+    if (!compact) {
+      root.classList.remove('nav-compact');
+      compact = tabs.scrollWidth > tabs.clientWidth + 1;
+    }
+    root.classList.toggle('nav-compact', compact);
+    if (compact !== was && $('.nav-menu')) closeDrawer();
+  }
+  let fitT = 0;
+  window.addEventListener('resize', () => { clearTimeout(fitT); fitT = setTimeout(fitNav, 60); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitNav);
   function renderShell() {
-    setTimeout(() => { renderPill(); renderStrip(); }, 0);
+    setTimeout(() => { renderPill(); renderStrip(); fitNav(); }, 0);
     $('#app').innerHTML = `
       <header class="top"><div class="top-in">
         <div class="bar">
@@ -877,6 +896,7 @@
     $('#hdr-upd').textContent = o.updated ? `atualizado ${hms(o.updated * 1000)}` : '';
     renderPill();
     markTabs();
+    fitNav();
   }
   function markTabs() {
     $$('.tab, .bn[data-tab], .sheet-item[data-tab]').forEach((t) => t.setAttribute('aria-current', t.dataset.tab === S.tab ? 'page' : 'false'));

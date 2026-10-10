@@ -414,35 +414,37 @@ code { font-family: var(--mono); font-size: .9em; background: var(--surface-3); 
 
 /* ---------- celular: navegação embaixo (ao alcance do polegar) e "Mais" ---------- */
 .bnav { display: none; }
-@media (max-width: 720px) {
-  .top .tabs { display: none; }
-  .top-in { padding-bottom: 10px; }
-  .bar-actions .icon-btn { display: none; } /* tema, configurações e sair ficam no "Mais" */
-  main { padding-bottom: 12px; }
-  .foot:not(.foot-login) { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
-  .bnav {
-    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-    backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px);
-    border-top: 1px solid var(--border); padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
-  }
-  .bn {
-    display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 0 5px; min-height: 52px;
-    font-size: .68rem; font-weight: 600; color: var(--muted); text-decoration: none; background: none; border: 0;
-    cursor: pointer; position: relative; border-radius: 12px; -webkit-tap-highlight-color: transparent;
-  }
-  .bn svg.i { width: 22px; height: 22px; }
-  .bn[aria-current="page"] { color: var(--accent); }
-  .bn[aria-current="page"] svg.i { stroke-width: 2.3; }
-  .bn .count { position: absolute; top: 1px; left: calc(50% + 5px); min-width: 17px; height: 17px; font-size: .62rem; padding: 0 4px; }
-  .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
-  .chat-log { max-height: calc(100dvh - 390px); }
+/* Menu de baixo (celular): vale até 720 px e também quando o menu de cima não cabe na
+   largura (fitNav no app.js põe .nav-compact no <html>). */
+.nav-compact .top .tabs { display: none; }
+.nav-compact .top-in { padding-bottom: 10px; }
+.nav-compact .bar-actions .icon-btn { display: none; } /* tema, configurações e sair ficam no "Mais" */
+.nav-compact main { padding-bottom: 12px; }
+.nav-compact .foot:not(.foot-login) { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+.nav-compact .bnav {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px);
+  border-top: 1px solid var(--border); padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
 }
+.nav-compact .bn {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 0 5px; min-height: 52px;
+  font-size: .68rem; font-weight: 600; color: var(--muted); text-decoration: none; background: none; border: 0;
+  cursor: pointer; position: relative; border-radius: 12px; -webkit-tap-highlight-color: transparent;
+}
+.nav-compact .bn svg.i { width: 22px; height: 22px; }
+.nav-compact .bn[aria-current="page"] { color: var(--accent); }
+.nav-compact .bn[aria-current="page"] svg.i { stroke-width: 2.3; }
+.nav-compact .bn .count { position: absolute; top: 1px; left: calc(50% + 5px); min-width: 17px; height: 17px; font-size: .62rem; padding: 0 4px; }
+.nav-compact .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+.nav-compact .chat-log { max-height: calc(100dvh - 390px); }
 .sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 41; background: var(--bg); border-radius: 18px 18px 0 0;
   padding: 10px 16px calc(18px + env(safe-area-inset-bottom)); box-shadow: 0 -10px 30px rgba(0, 0, 0, .18);
   max-height: 85dvh; overflow-y: auto; border-top: 1px solid var(--border);
 }
+/* menu de baixo numa tela larga (o de cima não coube): o "Mais" não ocupa a largura toda */
+@media (min-width: 721px) { .sheet { left: 50%; right: auto; width: min(640px, 100%); transform: translateX(-50%); border-left: 1px solid var(--border); border-right: 1px solid var(--border); } }
 .sheet-grip { width: 40px; height: 4px; border-radius: 99px; background: var(--surface-3); margin: 0 auto 14px; }
 .sheet-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .sheet-item {
@@ -592,7 +594,7 @@ a.btn { text-decoration: none; color: inherit; }
 }
 .update-bar > span { display: inline-flex; align-items: center; gap: 8px; }
 .update-bar svg.i { color: var(--accent); width: 16px; height: 16px; }
-@media (max-width: 720px) { .update-bar { bottom: calc(80px + env(safe-area-inset-bottom)); } }
+.nav-compact .update-bar { bottom: calc(80px + env(safe-area-inset-bottom)); }
 
 /* ---------- instalar como app ---------- */
 .install-bar {
@@ -888,7 +890,8 @@ a.btn { text-decoration: none; color: inherit; }
 .ssh-logcard { width: min(980px, 100%); }
 .ssh-log-t { font-size: .78rem; overflow-wrap: anywhere; min-width: 180px; }
 .nowrap { white-space: nowrap; }
+.nav-compact .ssh-chat { height: calc(100dvh - 290px - env(safe-area-inset-bottom)); min-height: 320px; }
 @media (max-width: 720px) {
-  .ssh-chat { height: calc(100dvh - 290px - env(safe-area-inset-bottom)); min-height: 320px; padding: 10px; }
+  .ssh-chat { padding: 10px; }
   .ssh-bar-acts .btn { padding: 6px 9px; }
 }
