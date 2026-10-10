@@ -102,6 +102,8 @@
     install: '<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>',
     broom: '<path d="m13 11 8-8"/><path d="M14.6 12.6c.8.8.9 2.1.2 3L10 22l-8-8 6.4-4.8c.9-.7 2.2-.6 3 .2z"/><path d="m6.8 10.4 6.8 6.8"/><path d="m5 17 1.5-1.5"/>',
     chev: '<polyline points="6 9 12 15 18 9"/>',
+    db: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+    upload: '<path d="M12 21V9M7 14l5-5 5 5"/><path d="M5 3h14"/>',
     eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     layers: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
     link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
@@ -606,7 +608,7 @@
   const TABS = [['overview', 'Visão geral', 'grid', 'Início'], ['servers', 'Servidores', 'layers', 'Servidores'], ['infos', 'Infos', 'info', 'Infos'],
     ['apps', 'Aplicações', 'box', 'Apps'], ['traffic', 'Banda', 'net', 'Banda'], ['logs', 'Logs', 'term', 'Logs'],
     ['system', 'Sistema', 'server', 'Sistema'], ['limits', 'Limites', 'load', 'Limites'],
-    ['cleanup', 'Limpeza', 'broom', 'Limpeza'], ['users', 'Usuários', 'users', 'Usuários'],
+    ['cleanup', 'Limpeza', 'broom', 'Limpeza'], ['backups', 'Backups', 'db', 'Backups'], ['users', 'Usuários', 'users', 'Usuários'],
     ['ai', 'IA', 'spark', 'IA'], ['notify', 'Notificações', 'bell', 'Avisos']]; // IA e WhatsApp juntas, no fim
   const BNAV = ['overview', 'apps', 'infos', 'ai']; // no celular, o resto fica em "Mais"
   // só as visíveis (em outro servidor não há IA): completa com Servidores/Banda
@@ -628,7 +630,7 @@
     : [u.actions && 'Ações nas apps', u.manage && 'Gerencia usuários', u.clean && 'Limpa o disco'].filter(Boolean).join(' · ') || 'Só leitura');
   // em outro servidor: tudo dele, menos o que nunca vai à distância (usuários, IA, WhatsApp)
   const REMOTE_TABS = new Set(['overview', 'servers', 'infos', 'apps', 'traffic', 'logs', 'system', 'limits', 'cleanup']);
-  const visibleTabs = () => TABS.filter(([k]) => (k !== 'notify' || can.admin()) && (k !== 'users' || can.manage())
+  const visibleTabs = () => TABS.filter(([k]) => (k !== 'notify' || can.admin()) && (k !== 'backups' || can.admin()) && (k !== 'users' || can.manage())
     && (!S.remote || (REMOTE_TABS.has(k) && (k !== 'logs' || S.remote.logs || S.remote.control))));
   const tabHref = (k) => `#/${k === 'overview' ? '' : k}`;
   const countHTML = (k) => (k === 'infos' ? '<span class="count infos-count" hidden></span>' : '');
@@ -2829,7 +2831,286 @@
     },
   };
 
-  const VIEWS = { overview, servers: serversView, cleanup: cleanupView, users: usersView, infos: infosView, ai: aiView, apps: appsView, traffic: trafficView, logs: logsView, system: systemView, limits: limitsView, notify: notifyView };
+  // ------------------------------------------------------------------ aba: backups dos bancos (só administradores)
+  const BK_EVERY = { '1h': 'A cada hora', '6h': 'A cada 6 horas', '24h': 'Uma vez por dia' };
+  const BK_TIER = { hourly: 'horário', daily: 'diário', monthly: 'mensal' };
+  const bkEngine = (k) => ((S.bk && S.bk.engines) || []).find((e) => e.key === k) || { name: k, restore: [] };
+  const backupsView = {
+    mount(v) {
+      v.innerHTML = `<div class="page"><div class="section-h"><div><h2>${icon('db')} Backups dos bancos</h2>
+        <p>O painel tira o dump de cada banco escolhido, cifra com a sua chave e manda para o seu bucket (Cloudflare R2 ou outro compatível com S3).</p></div></div>
+        <div id="bk-body"><div class="loading"><div class="spinner"></div></div></div></div>`;
+      backupsView.files = {};
+      backupsView.priv = '';
+      backupsView.listen($('#bk-body'));
+      backupsView.load();
+    },
+    async load() {
+      clearTimeout(backupsView.t);
+      try {
+        const j = await api('/api/backup');
+        S.bk = j.backup;
+        backupsView.render();
+        if (S.bk.running || S.bk.queue.length) backupsView.t = setTimeout(() => { if (S.tab === 'backups') backupsView.load(); }, 3000);
+      } catch (e) {
+        if (e.message !== 'login' && $('#bk-body')) $('#bk-body').innerHTML = `<div class="card empty">${esc(e.message)}</div>`;
+      }
+    },
+    render() {
+      const body = $('#bk-body');
+      if (!body || !S.bk) return;
+      if (body.contains(document.activeElement) && document.activeElement.matches('input, select')) return;
+      const b = S.bk, st = b.storage;
+      const step = (ok, n, t) => `<li class="${ok ? 'done' : ''}">${icon(ok ? 'ok' : 'info')}<span><b>${n}.</b> ${t}</span></li>`;
+      body.innerHTML = `
+        ${!b.configured ? `<section class="card"><div class="card-h"><h2>${icon('info')}Para começar</h2></div><ol class="bk-steps">
+          ${step(st.hasSecret, 1, 'Armazenamento: o bucket e as chaves de acesso (o painel testa antes de salvar).')}
+          ${step(!!b.publicKey, 2, 'Chave de criptografia: gere aqui (a privada fica com você) ou cole uma pública.')}
+          ${step(b.dbs.some((d) => d.enabled), 3, 'Ligue os bancos que quer copiar, com a frequência de cada um.')}</ol></section>` : ''}
+        ${backupsView.priv ? backupsView.privHTML() : ''}
+        <div class="grid g2">
+          ${backupsView.storageHTML(st)}
+          ${backupsView.keyHTML()}
+        </div>
+        ${backupsView.dbsHTML()}
+        <div class="grid g2">
+          ${backupsView.retentionHTML()}
+          ${backupsView.restoreHTML()}
+        </div>
+        ${backupsView.historyHTML()}
+        <section class="note"><b>Como o painel faz o dump.</b> Ele roda um comando fixo dentro do contêiner do banco (<code>docker exec</code>)
+          usando o usuário e a senha que já estão nas variáveis do contêiner, cifra a saída na hora com a chave pública e só então grava num
+          arquivo temporário e envia. O servidor nunca guarda a chave privada: nem ele nem o bucket conseguem abrir os backups.
+          Para isso o proxy do Docker deixa o painel rodar <code>exec</code>, o que também permitiria, com o painel invadido, rodar comandos nos contêineres.</section>`;
+    },
+    storageHTML(st) {
+      return `<section class="card"><div class="card-h"><h2>${icon('upload')}Armazenamento</h2>${st.hasSecret ? badge('ok', 'testado') : badge('info', 'falta configurar')}</div>
+        <form class="stack" id="bk-storage" autocomplete="off">
+          <div class="field"><label for="bk-ep">Endpoint (S3)</label><input class="input" id="bk-ep" required value="${esc(st.endpoint)}" placeholder="https://<id-da-conta>.r2.cloudflarestorage.com" spellcheck="false" autocapitalize="off"></div>
+          <div class="bk-two">
+            <div class="field"><label for="bk-bucket">Bucket</label><input class="input" id="bk-bucket" required value="${esc(st.bucket)}" placeholder="meus-backups" spellcheck="false" autocapitalize="off"></div>
+            <div class="field"><label for="bk-region">Região</label><input class="input" id="bk-region" value="${esc(st.region || 'auto')}" spellcheck="false" autocapitalize="off"></div>
+          </div>
+          <div class="field"><label for="bk-ak">Access Key ID</label><input class="input" id="bk-ak" required value="${esc(st.accessKey)}" spellcheck="false" autocapitalize="off"></div>
+          <div class="field"><label for="bk-sk">Secret Access Key</label><input class="input" id="bk-sk" type="password" ${st.hasSecret ? 'placeholder="guardada (deixe vazio para manter)"' : 'required'} autocomplete="new-password"></div>
+          <div class="field"><label for="bk-prefix">Pasta no bucket</label><input class="input" id="bk-prefix" value="${esc(S.bk.prefix || 'vpserver')}" spellcheck="false" autocapitalize="off">
+            <small class="muted">Os arquivos ficam em ${esc(S.bk.prefix || 'vpserver')}/${esc(S.bk.server)}/&lt;banco&gt;/: dá para vários servidores dividirem um bucket.</small></div>
+          <div class="form-err" id="bk-st-err" role="alert"></div>
+          <div><button class="btn primary" type="submit">Testar e salvar</button></div>
+          <details class="bk-help"><summary>Como criar no Cloudflare R2</summary>
+            <ol><li>No painel da Cloudflare: <b>R2</b> → <b>Create bucket</b> (o nome vai em "Bucket").</li>
+              <li>Em <b>R2</b> → <b>Manage R2 API Tokens</b> → <b>Create API token</b>: permissão <b>Object Read &amp; Write</b>, só neste bucket.</li>
+              <li>Copie a <b>Access Key ID</b>, a <b>Secret Access Key</b> e o endpoint <code>https://&lt;id-da-conta&gt;.r2.cloudflarestorage.com</code>. Região: <code>auto</code>.</li>
+              <li>O painel testa gravando, conferindo, listando e apagando um arquivo pequeno.</li></ol></details>
+        </form></section>`;
+    },
+    keyHTML() {
+      const pub = S.bk.publicKey;
+      return `<section class="card"><div class="card-h"><h2>${icon('key')}Chave de criptografia</h2>${pub ? badge('ok', 'configurada') : badge('info', 'falta configurar')}</div>
+        ${pub ? `<p class="muted bk-p">Os backups são cifrados para esta chave pública. Só a chave privada correspondente, que fica com você, abre os arquivos.</p>
+          <div class="bk-key"><code>${esc(pub)}</code><button class="btn sm" type="button" data-copy="${esc(pub)}">Copiar</button></div>
+          <div class="controls"><button class="btn" type="button" data-bk="key-new">Gerar outra</button><button class="btn" type="button" data-bk="key-paste">Usar outra pública</button></div>`
+        : `<p class="muted bk-p">Formato <b>age</b> (abre com a ferramenta oficial <code>age</code>). O servidor guarda só a chave pública.</p>
+          <div class="controls"><button class="btn primary" type="button" data-bk="key-new">${icon('key')}Gerar par de chaves</button><button class="btn" type="button" data-bk="key-paste">Já tenho uma chave pública</button></div>`}
+        <form class="stack" id="bk-pub" hidden autocomplete="off"><div class="field"><label for="bk-pubin">Chave pública (age1…)</label>
+          <input class="input" id="bk-pubin" placeholder="age1…" spellcheck="false" autocapitalize="off"></div>
+          <div><button class="btn primary" type="submit">Usar esta chave</button></div></form></section>`;
+    },
+    privHTML() {
+      const k = backupsView.priv;
+      return `<section class="card bk-priv" role="alert"><div class="card-h"><h2>${icon('warn')}Guarde a chave privada agora</h2></div>
+        <p>Esta é a <b>única vez</b> que ela aparece: o servidor não guarda. <b>Sem ela, nenhum backup abre.</b> Guarde no gerenciador de senhas
+          (ou num arquivo seguro, fora do servidor) e teste uma restauração.</p>
+        <div class="bk-key"><code>${esc(k)}</code></div>
+        <div class="controls"><button class="btn" type="button" data-copy="${esc(k)}">Copiar</button>
+          <button class="btn" type="button" data-bk="key-download">${icon('install')}Baixar chave.txt</button>
+          <button class="btn primary" type="button" data-bk="key-saved">Já guardei</button></div></section>`;
+    },
+    dbsHTML() {
+      const b = S.bk;
+      const row = (d) => {
+        const eng = bkEngine(d.engine);
+        const last = d.lastRun ? (d.lastErr
+          ? `<span class="bk-err">${icon('crit')}Falhou ${ago(d.lastRun)}: ${esc(d.lastErr)}</span>`
+          : `<span>${icon('ok')}Último ${ago(d.lastRun)} · ${bytes(d.lastSize)}</span>`) : '<span class="muted">Ainda não rodou.</span>';
+        const running = b.running === d.id ? `<span class="spinner inline"></span> fazendo agora…` : b.queue.includes(d.id) ? 'na fila…' : '';
+        const files = backupsView.files[d.id];
+        return `<div class="bk-db${d.enabled ? ' on' : ''}" data-db="${esc(d.id)}">
+          <div class="bk-db-h"><label class="bk-db-n"><input type="checkbox" class="sw" data-bkon ${d.enabled ? 'checked' : ''} ${d.found ? '' : 'disabled'}>
+            <span><span class="bk-db-t"><b>${esc(d.appName || d.app || d.id)}</b> <span class="muted">· ${esc(d.service || d.container)}</span></span>
+              <small class="muted">${esc(eng.name)} · ${d.found ? `${esc(d.container)} (${esc(d.state)})` : 'contêiner não encontrado agora'}</small></span></label>
+            <span class="bk-tag">${esc(eng.name)}</span></div>
+          <div class="bk-db-cfg">
+            <div class="field"><label>Frequência</label><select class="input" data-bkevery>${Object.entries(BK_EVERY).map(([k, l]) => `<option value="${k}" ${d.every === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+            <div class="field"><label>Banco (opcional)</label><input class="input" data-bkdb value="${esc(d.database || '')}" placeholder="o padrão do contêiner" spellcheck="false" autocapitalize="off"></div>
+          </div>
+          <div class="bk-db-st">${last}${d.enabled && d.next ? `<span class="muted">próximo: ${dt(d.next)}</span>` : ''}${running ? `<span>${running}</span>` : ''}</div>
+          <div class="controls"><button class="btn sm" type="button" data-bk="run" ${d.enabled && d.found ? '' : 'disabled'}>${icon('upload')}Fazer agora</button>
+            <button class="btn sm" type="button" data-bk="files" ${b.configured ? '' : 'disabled'}>${icon('logs')}Arquivos</button></div>
+          ${files ? `<div class="bk-files">${files.loading ? '<div class="loading"><div class="spinner"></div></div>' : files.error ? `<div class="form-err">${esc(files.error)}</div>`
+            : files.list.length ? files.list.map((o) => {
+              const tier = (o.key.match(/\/(hourly|daily|monthly)\//) || [])[1];
+              return `<div class="bk-file"><span><b>${dt(Date.parse(o.modified) / 1000)}</b> <span class="muted">${BK_TIER[tier] || ''} · ${bytes(o.size)}</span>
+                <small class="muted">${esc(o.key.split('/').pop())}</small></span>
+                <a class="btn sm" href="/api/backup/download?key=${encodeURIComponent(o.key)}" download>${icon('install')}Baixar</a></div>`;
+            }).join('') : '<div class="muted">Nenhum arquivo no bucket ainda.</div>'}</div>` : ''}
+        </div>`;
+      };
+      return `<section class="card"><div class="card-h"><h2>${icon('db')}Bancos encontrados</h2></div>
+        ${b.dbs.length ? `<div class="bk-dbs">${b.dbs.map(row).join('')}</div>`
+          : `<div class="empty">Nenhum banco nos contêineres (o painel reconhece PostgreSQL, MySQL/MariaDB, MongoDB e Redis/Valkey pela imagem).</div>`}
+        ${!b.configured ? '<p class="muted bk-p">Configure o armazenamento e a chave para ligar os backups.</p>' : ''}</section>`;
+    },
+    retentionHTML() {
+      const r = S.bk.retention;
+      return `<section class="card"><div class="card-h"><h2>${icon('clock')}Retenção</h2></div>
+        <form class="stack" id="bk-ret" autocomplete="off">
+          <div class="bk-three">
+            <div class="field"><label for="bk-rh">Horários</label><div class="cl-inline"><input class="input" type="number" id="bk-rh" min="1" max="30" value="${r.hourly}"><span>dias</span></div></div>
+            <div class="field"><label for="bk-rd">Diários</label><div class="cl-inline"><input class="input" type="number" id="bk-rd" min="1" max="365" value="${r.daily}"><span>dias</span></div></div>
+            <div class="field"><label for="bk-rm">Mensais</label><div class="cl-inline"><input class="input" type="number" id="bk-rm" min="1" max="3650" value="${r.monthly}"><span>dias</span></div></div>
+          </div>
+          <div class="field"><label for="bk-at">O backup do dia (diário/mensal) é o primeiro depois das</label>
+            <div class="cl-inline"><input class="input" type="number" id="bk-at" min="0" max="23" value="${r.dailyAt}"><span>h (UTC)</span></div></div>
+          <label class="perm"><input type="checkbox" class="sw" id="bk-bybucket" ${r.byBucket ? 'checked' : ''}><span><b>Deixar a retenção para as regras do bucket</b>
+            <small>O painel não apaga nada; configure as regras de ciclo de vida no provedor (no R2: Settings → Object lifecycle rules, por prefixo).</small></span></label>
+          <div class="form-err" id="bk-ret-err" role="alert"></div>
+          <div><button class="btn" type="submit">Salvar</button></div></form></section>`;
+    },
+    restoreHTML() {
+      const used = [...new Set(S.bk.dbs.map((d) => d.engine))];
+      const engs = S.bk.engines.filter((e) => !used.length || used.includes(e.key));
+      return `<section class="card"><div class="card-h"><h2>${icon('refresh')}Como restaurar</h2></div>
+        <p class="muted bk-p">Baixe o arquivo (em "Arquivos") e, no computador onde está a chave privada, use a ferramenta
+          <a href="https://age-encryption.org" target="_blank" rel="noopener noreferrer">age</a>. Teste uma restauração de vez em quando, num banco descartável.</p>
+        ${engs.map((e) => `<div class="bk-restore"><b>${esc(e.name)}</b>${e.restore.map((l) => `<pre>${esc(l)}</pre>`).join('')}</div>`).join('')}</section>`;
+    },
+    historyHTML() {
+      const runs = S.bk.runs;
+      return `<section class="card"><div class="card-h"><h2>${icon('logs')}Histórico</h2></div>
+        ${runs.length ? `<div class="nlog">${runs.map((r) => `<details class="nl"><summary><span class="nl-time">${dt(r.t)}</span>
+          ${badge(r.error ? 'crit' : 'ok', r.error ? 'falhou' : BK_TIER[r.tier] || 'ok')}<span class="nl-title">${esc(r.target)}${r.error ? '' : ` · ${bytes(r.size)} em ${r.seconds} s`}</span>
+          ${r.error ? `<span class="nl-err">${esc(r.error)}</span>` : ''}</summary>
+          <div class="cl-steps">${r.key ? `<div>Arquivo: <code>${esc(r.key)}</code></div>` : ''}<div>${r.by ? `Pedido por ${esc(r.by)}` : 'Agendado'}${r.plain ? ` · dump de ${bytes(r.plain)}` : ''}</div>
+            ${r.pruned ? `<div>${r.pruned} arquivo(s) antigo(s) apagado(s) pela retenção.</div>` : ''}${r.pruneErr ? `<div class="nl-err">Retenção: ${esc(r.pruneErr)}</div>` : ''}</div></details>`).join('')}</div>`
+          : '<div class="empty">Nenhum backup ainda.</div>'}</section>`;
+    },
+    async saveTarget(row, enabled, confirm) {
+      const id = row.dataset.db;
+      const d = S.bk.dbs.find((x) => x.id === id) || {};
+      const every = $('[data-bkevery]', row).value, database = $('[data-bkdb]', row).value.trim();
+      if (enabled && !d.enabled) {
+        const eng = bkEngine(d.engine);
+        const ok = await confirmDialog({ title: `Ligar o backup de ${d.appName || id}?`, ok: 'Ligar o backup',
+          body: `<p>${esc(BK_EVERY[every])}, o painel vai rodar o dump do <b>${esc(eng.name)}</b> dentro do contêiner <b>${esc(d.container)}</b>
+            (<code>docker exec</code>), com as credenciais das variáveis dele${database ? `, banco <b>${esc(database)}</b>` : ''}.</p>
+            <p>O dump sai cifrado para o bucket. Enquanto roda, o banco tem a carga de uma leitura completa; em bancos grandes, prefira uma frequência menor.</p>` });
+        if (!ok) { $('[data-bkon]', row).checked = false; return; }
+        confirm = true;
+      }
+      try {
+        await api('/api/backup/target', { method: 'POST', body: JSON.stringify({ id, enabled, every, database, confirm: !!confirm || d.enabled }) });
+        toast(enabled ? `Backup de ${d.appName || id}: ${BK_EVERY[every].toLowerCase()}.` : `Backup de ${d.appName || id} desligado.`);
+      } catch (ex) { if (ex.message !== 'login') toast(ex.message); }
+      document.activeElement && document.activeElement.blur();
+      backupsView.load();
+    },
+    listen(body) {
+      body.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const f = e.target, btn = $('button[type="submit"]', f);
+        btn.disabled = true;
+        try {
+          if (f.id === 'bk-storage') {
+            $('#bk-st-err').textContent = '';
+            btn.textContent = 'Testando…';
+            const r = await api('/api/backup/storage', { method: 'POST', body: JSON.stringify({ endpoint: $('#bk-ep').value, bucket: $('#bk-bucket').value,
+              region: $('#bk-region').value, accessKey: $('#bk-ak').value, secretKey: $('#bk-sk').value, prefix: $('#bk-prefix').value }) });
+            toast(`Armazenamento testado e salvo (bucket ${r.storage.bucket}).`);
+          } else if (f.id === 'bk-pub') {
+            if (S.bk.publicKey && !await confirmDialog({ title: 'Trocar a chave pública?', ok: 'Trocar', danger: true,
+              body: '<p>Os próximos backups passam a ser cifrados para a chave nova. <b>Os que já estão no bucket continuam abrindo só com a chave privada antiga</b>: guarde as duas.</p>' })) { btn.disabled = false; return; }
+            await api('/api/backup/key', { method: 'POST', body: JSON.stringify({ publicKey: $('#bk-pubin').value, confirm: true }) });
+            toast('Chave pública salva.');
+          } else if (f.id === 'bk-ret') {
+            await api('/api/backup/retention', { method: 'POST', body: JSON.stringify({ hourly: +$('#bk-rh').value, daily: +$('#bk-rd').value,
+              monthly: +$('#bk-rm').value, dailyAt: +$('#bk-at').value, byBucket: $('#bk-bybucket').checked }) });
+            toast('Retenção salva.');
+          }
+          document.activeElement && document.activeElement.blur();
+          backupsView.load();
+        } catch (ex) {
+          if (ex.message === 'login') return;
+          const err = $(f.id === 'bk-storage' ? '#bk-st-err' : f.id === 'bk-ret' ? '#bk-ret-err' : '#bk-st-err');
+          if (f.id === 'bk-pub') toast(ex.message); else if (err) err.textContent = ex.message;
+        }
+        btn.disabled = false;
+        if (f.id === 'bk-storage') btn.textContent = 'Testar e salvar';
+      });
+      body.addEventListener('change', (e) => {
+        const row = e.target.closest('[data-db]');
+        if (!row) return;
+        if (e.target.matches('[data-bkon]')) backupsView.saveTarget(row, e.target.checked);
+        else if (e.target.matches('[data-bkevery], [data-bkdb]')) {
+          const d = S.bk.dbs.find((x) => x.id === row.dataset.db);
+          if (d && d.enabled) backupsView.saveTarget(row, true, true);
+        }
+      });
+      body.addEventListener('click', async (e) => {
+        const b = e.target.closest('[data-bk]');
+        if (!b) return;
+        const act = b.dataset.bk, row = b.closest('[data-db]');
+        try {
+          if (act === 'key-paste') { const f = $('#bk-pub'); f.hidden = !f.hidden; if (!f.hidden) $('#bk-pubin').focus(); return; }
+          if (act === 'key-new') {
+            if (S.bk.publicKey && !await confirmDialog({ title: 'Gerar outra chave?', ok: 'Gerar outra', danger: true,
+              body: '<p>Os próximos backups passam a ser cifrados para a chave nova. <b>Os que já estão no bucket continuam abrindo só com a chave privada antiga</b>: guarde as duas.</p>' })) return;
+            const r = await api('/api/backup/key', { method: 'POST', body: JSON.stringify({ generate: true, confirm: true }) });
+            backupsView.priv = r.privateKey;
+            await backupsView.load();
+            window.scrollTo(0, 0);
+            return;
+          }
+          if (act === 'key-download') {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([`# chave privada dos backups do VPServer (${S.bk.server})\n# public key: ${S.bk.publicKey}\n${backupsView.priv}\n`], { type: 'text/plain' }));
+            a.download = 'chave-backups.txt';
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+            return;
+          }
+          if (act === 'key-saved') {
+            if (!await confirmDialog({ title: 'Guardou a chave privada?', ok: 'Guardei', body: '<p>Depois de fechar, ela não aparece mais. Sem ela, nenhum backup abre.</p>' })) return;
+            backupsView.priv = '';
+            backupsView.render();
+            return;
+          }
+          if (act === 'run') {
+            const d = S.bk.dbs.find((x) => x.id === row.dataset.db);
+            if (!await confirmDialog({ title: `Fazer o backup de ${d.appName || d.id} agora?`, ok: 'Fazer agora',
+              body: `<p>Roda o dump dentro do contêiner <b>${esc(d.container)}</b> agora e envia ao bucket (fora da agenda).</p>` })) return;
+            await api('/api/backup/run', { method: 'POST', body: JSON.stringify({ id: d.id, confirm: true }) });
+            toast('Backup na fila.');
+            backupsView.load();
+            return;
+          }
+          if (act === 'files') {
+            const id = row.dataset.db;
+            if (backupsView.files[id] && !backupsView.files[id].loading) { delete backupsView.files[id]; backupsView.render(); return; }
+            backupsView.files[id] = { loading: true };
+            backupsView.render();
+            try {
+              const j = await api(`/api/backup/objects?id=${encodeURIComponent(id)}`);
+              backupsView.files[id] = { list: j.objects || [] };
+            } catch (ex) { backupsView.files[id] = { list: [], error: ex.message }; }
+            backupsView.render();
+          }
+        } catch (ex) { if (ex.message !== 'login') toast(ex.message); }
+      });
+    },
+  };
+
+  const VIEWS = { overview, servers: serversView, cleanup: cleanupView, backups: backupsView, users: usersView, infos: infosView, ai: aiView, apps: appsView, traffic: trafficView, logs: logsView, system: systemView, limits: limitsView, notify: notifyView };
 
   // ------------------------------------------------------------------ eventos globais
   document.addEventListener('click', async (e) => {
