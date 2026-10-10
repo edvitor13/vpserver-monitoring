@@ -22,7 +22,7 @@ func (s srcStub) Overview() monitor.Overview {
 	o.Server.Name = s.name
 	return o
 }
-func (srcStub) Summary(string, time.Time) string          { return "" }
+func (srcStub) Summary(string, time.Time, string) string  { return "" }
 func (srcStub) PeriodOf(string, time.Time) monitor.Period { return monitor.Period{} }
 func (srcStub) AIContext() string                         { return "" }
 func (srcStub) AI() ai.Executor                           { return nil }

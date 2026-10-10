@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/edvitor13/vpserver-monitoring/internal/i18n"
 )
 
 // O que a tela (aba Notificações) usa.
@@ -121,6 +123,9 @@ func (s *Service) SaveConfig(c Config) (Config, error) {
 	if c.MaxPerHour != 0 && (c.MaxPerHour < minPerHour || c.MaxPerHour > topPerHour) {
 		return Config{}, fmt.Errorf("o limite vai de %d a %d mensagens por hora", minPerHour, topPerHour)
 	}
+	if c.Lang != "" && !i18n.Valid(c.Lang) {
+		return Config{}, fmt.Errorf("idioma desconhecido: %q", c.Lang)
+	}
 	c.PanelURL = strings.TrimRight(strings.TrimSpace(c.PanelURL), "/")
 	if c.PanelURL != "" && (len(c.PanelURL) > 200 || strings.ContainsAny(c.PanelURL, " \n\t\"'<>") ||
 		!(strings.HasPrefix(c.PanelURL, "https://") || strings.HasPrefix(c.PanelURL, "http://"))) {
@@ -129,6 +134,9 @@ func (s *Service) SaveConfig(c Config) (Config, error) {
 	s.mu.Lock()
 	if !PublicOrigin(c.PanelURL) && PublicOrigin(s.cfg.PanelURL) {
 		c.PanelURL = s.cfg.PanelURL // salvou entrando pelo túnel SSH (localhost): mantém o endereço público
+	}
+	if c.Lang == "" {
+		c.Lang = s.cfg.Lang // tela antiga (sem o campo): mantém
 	}
 	s.cfg = c
 	s.dirty = true
@@ -212,7 +220,7 @@ func (s *Service) sendNowKind(ctx context.Context, kind string, cfg Config) (str
 	s.mu.Unlock()
 	switch kind {
 	case "test":
-		text := fmt.Sprintf("✅ *Teste do VPServer · %s*\nAs notificações deste painel vão chegar aqui.%s", server, s.link("notify"))
+		text := s.out(fmt.Sprintf("✅ *Teste do VPServer · %s*\nAs notificações deste painel vão chegar aqui.%s", server, s.link("notify")))
 		okN, errs := s.sendVia(ctx, relay, cfg.Recipients, text)
 		e := LogEntry{T: now.Unix(), Kind: "test", Title: "Mensagem de teste", Text: text, Status: "sent"}
 		if len(errs) > 0 {

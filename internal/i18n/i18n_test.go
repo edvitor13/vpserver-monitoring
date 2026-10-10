@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testCatalog() {
@@ -86,5 +87,73 @@ func TestRealCatalogLoads(t *testing.T) {
 	}
 	if Has("en") && Tr("en", "Dados inválidos.") == "Dados inválidos." && len(f.Exact) > 0 {
 		t.Fatal("o inglês traduz as mensagens fixas")
+	}
+}
+
+// Mensagem do WhatsApp: montada em pedaços, traduzida linha por linha, com o
+// enfeite (emoji, "• ", *negrito*) de fora; cada linha dos formatos de várias
+// linhas também vale sozinha.
+func TestMessage(t *testing.T) {
+	Use("xx", File{
+		Exact: map[string]string{"Urgente": "Urgent", "Resumo de ontem": "Yesterday's summary", "*Servidor*": "*Server*"},
+		Formats: map[string]string{
+			"Disco %.0f%% cheio":                  "Disk %.0f%% full",
+			"*%s* _(piorou)_":                     "*%s* _(got worse)_",
+			"%d dias":                             "%d days",
+			"%s _(durou %s)_":                     "%s _(lasted %s)_",
+			"✅ *Resolvido · %s*\n%s _(durou %s)_": "✅ *Resolved · %s*\n%s _(lasted %s)_",
+			"🔐 *Segurança*\n*%s* entrou (IP %s).": "🔐 *Security*\n*%s* signed in (IP %s).",
+			"Backup de %s:\n%[2]s":                "%[2]s\nbackup of %[1]s", // índice: não vale por linha
+			"• Saída: %s · entrada %s":            "• Outbound: %s · inbound %s",
+		},
+	})
+	cases := map[string]string{
+		"🔴 *Urgente · srv*\n*Disco 92% cheio*\nVeja 🔗 https://painel.exemplo.com/#/infos": "🔴 *Urgent · srv*\n*Disk 92% full*\nVeja 🔗 https://painel.exemplo.com/#/infos",
+		"🔴 *Disco 92% cheio* _(piorou)_":                        "🔴 *Disk 92% full* _(got worse)_",
+		"✅ *Resolvido · srv*\nDisco 95% cheio _(durou 3 dias)_": "✅ *Resolved · srv*\nDisk 95% full _(lasted 3 days)_",
+		// um formato de várias linhas no meio de outra mensagem (o resumo do silêncio)
+		"🌙 *Silêncio*\n\n_23:10_\n🔐 *Segurança*\n*ana* entrou (IP 203.0.113.7).":    "🌙 *Silêncio*\n\n_23:10_\n🔐 *Security*\n*ana* signed in (IP 203.0.113.7).",
+		"📊 *Resumo de ontem · srv*\n\n*Servidor*\n• Saída: 2,5 GB · entrada 1,0 GB": "📊 *Yesterday's summary · srv*\n\n*Server*\n• Outbound: 2.5 GB · inbound 1.0 GB",
+		"Texto da IA que já veio em inglês.\n• loja-api: ok":                        "Texto da IA que já veio em inglês.\n• loja-api: ok",
+	}
+	for in, want := range cases {
+		if got := Message("xx", in); got != want {
+			t.Errorf("%q:\n%q\nesperava\n%q", in, got, want)
+		}
+	}
+	if got := Message("xx", "backup of loja"); got != "backup of loja" {
+		t.Fatalf("linha de formato com índice não vira padrão: %q", got)
+	}
+	if got := Message(Default, "🔴 *Urgente · srv*"); got != "🔴 *Urgente · srv*" {
+		t.Fatalf("o português passa direto: %q", got)
+	}
+}
+
+// Linha que aparece em dois textos de várias linhas tem a mesma tradução nos dois.
+func TestCatalogLinesAgree(t *testing.T) {
+	if _, _, conflicts := lines(readCatalog(t)); len(conflicts) > 0 {
+		t.Fatalf("linhas com duas traduções diferentes em en.json: %q", conflicts)
+	}
+	_, _, conflicts := lines(File{Exact: map[string]string{"a\nPor favor": "a\nPlease", "b\nPor favor": "b\nKindly"}})
+	if len(conflicts) != 1 {
+		t.Fatalf("conflito não achado: %q", conflicts)
+	}
+}
+
+func TestDates(t *testing.T) {
+	d := time.Date(2026, 10, 5, 14, 0, 0, 0, time.UTC) // segunda
+	for _, c := range [][2]string{
+		{Weekday(Default, d.Weekday()) + ", " + DayMonth(Default, d), "segunda, 05/10"},
+		{Weekday("en", d.Weekday()) + ", " + DayMonth("en", d), "Monday, 10/05"},
+		{MonthYear(Default, d), "outubro de 2026"},
+		{MonthYear("en", d), "October 2026"},
+		{Month(Default, time.March), "março"},
+	} {
+		if c[0] != c[1] {
+			t.Errorf("%q, esperava %q", c[0], c[1])
+		}
+	}
+	if !Valid(Default) || !Valid("en") || Valid("fr") || Valid("") {
+		t.Fatal("Valid")
 	}
 }

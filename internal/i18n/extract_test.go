@@ -20,7 +20,7 @@ import (
 
 var (
 	accent  = regexp.MustCompile(`[À-ÖØ-öø-ÿ]`)
-	ptWords = regexp.MustCompile(`(?i)\b(nao|para|com|sem|uma|dos|das|pelo|pela|ainda|agora|quando|servidor|painel|banco|disco|senha|erro|falhou|parou|caiu|rodando|ligado|desligado|nenhum|nenhuma|aqui|depois|antes|hoje|ontem|dias|horas|livre|cheio|avisos|resumo|outros|outras|todos|todas|sistema|isso|esse|essa|este|esta|deste|desta|neste|nesta|nesse|nessa|nada|menos|tempo|seu|sua|algum|alguma|mesmo|mesma|cada|vezes|dele|dela|nunca|sempre|tela|entrada|saida|limite|parado|parada|pausado|pausada|retomado|retomada|ligada|desligada|ativo|ativa)\b`)
+	ptWords = regexp.MustCompile(`(?i)\b(nao|para|com|sem|uma|dos|das|pelo|pela|ainda|agora|quando|servidor|painel|banco|disco|senha|erro|falhou|parou|caiu|rodando|ligado|desligado|nenhum|nenhuma|aqui|depois|antes|hoje|ontem|dias|horas|livre|cheio|avisos|resumo|outros|outras|todos|todas|sistema|isso|esse|essa|este|esta|deste|desta|neste|nesta|nesse|nessa|nada|menos|tempo|seu|sua|algum|alguma|mesmo|mesma|cada|vezes|dele|dela|nunca|sempre|tela|entrada|saida|limite|parado|parada|pausado|pausada|retomado|retomada|ligada|desligada|ativo|ativa|urgente|alerta|alertas|aviso|piorou|continua|mais|idioma|desconhecido|de|em|ao|aos|nos|nas|durou|resolvido|resolvidos|imagem|nova|novo|atualizada|atualizado|removida|removido|entrou|ligou|trocada|teste|enviado|enviada|falhar|falha|fora|dentro|ficou|veja|confira|tente|use|abra)\b`)
 	letters = regexp.MustCompile(`[A-Za-zÀ-ÿ]{2,}`)
 )
 
@@ -29,19 +29,22 @@ var (
 	skipDirs  = []string{"internal/xcrypto", "internal/setup", "internal/i18n", "internal/sshchat/sshtest"}
 	skipFiles = map[string]bool{"internal/monitor/cloud.go": true} // nomes de cidade
 	// prompts e scripts: vão para a IA ou para o shell, não para a tela
-	skipDecls = regexp.MustCompile(`(?i)prompt|^whatsappStyle$|^rcScript$|^(weekday|month)Names$`)
+	skipDecls = regexp.MustCompile(`(?i)prompt|^whatsappStyle$|^rcScript$`)
 	// campos que são código (a tela compara ou mapeia): nunca traduzir
 	codeFields = map[string]bool{"Area": true, "Level": true, "Key": true, "Kind": true, "Project": true, "Service": true}
-	// textos que não são de tela: rótulos do Docker, nomes técnicos, usuário de mentira do login
-	skipTexts = regexp.MustCompile(`^(com\.docker\.|keepalive@|painel-central:|vpmon-usuario-)`)
+	// textos que não são de tela: rótulos do Docker, nomes técnicos, usuário de mentira do login, o
+	// arquivo de teste do bucket (nome e conteúdo) e os últimos comandos que vão para a IA do SSH
+	skipTexts = regexp.MustCompile(`^(com\.docker\.|keepalive@|painel-central:|vpmon-usuario-|teste do VPServer: pode apagar|\$ %s)|\.vpserver-teste$`)
 	skipFuncs = map[string]bool{"setupScript": true, "revokeScript": true}
 	// em monitor/ai.go, só os rótulos das ferramentas aparecem na tela (o resto é para a IA)
 	onlyFuncs = map[string]map[string]bool{"internal/monitor/ai.go": {"Label": true}}
 	skipCalls = regexp.MustCompile(`^(slog\.|regexp\.|strings\.(Has|Contains|Trim|Index|Cut|Split|Replace|Count|EqualFold|Fields)|errors\.Is|filepath\.|os\.|http\.)`)
 	// argumentos que são código (chave, nível e área do alerta em add(chave, nível, área, título, detalhe, alvo))
 	codeArgs = map[string]int{"add": 3}
+	// campos posicionais que são código: chave e grupo de cada notify.Kind ({"app_down", "alertas", rótulo, …})
+	codeElems = map[string]int{"Kind": 2}
 	// chamadas cujo argumento é um formato do fmt (e em que posição)
-	fmtCalls = map[string]int{"fmt.Sprintf": 0, "fmt.Errorf": 0, "fmt.Printf": 0, "fmt.Fprintf": 1, "line": 0, "list": 1}
+	fmtCalls = map[string]int{"fmt.Sprintf": 0, "fmt.Errorf": 0, "fmt.Printf": 0, "fmt.Fprintf": 1, "line": 0, "list": 1, "top": 0}
 )
 
 type keys struct {
@@ -194,6 +197,19 @@ func collect(f *ast.File, fs *token.FileSet, rel string, k *keys) {
 		}
 		where := rel + ":" + strconv.Itoa(fs.Position(lit.Pos()).Line)
 		parent := stack[len(stack)-2]
+		if inner, ok := parent.(*ast.CompositeLit); ok && inner.Type == nil && len(stack) >= 3 {
+			if outer, ok := stack[len(stack)-3].(*ast.CompositeLit); ok {
+				if at, ok := outer.Type.(*ast.ArrayType); ok {
+					if id, ok := at.Elt.(*ast.Ident); ok {
+						for i := 0; i < codeElems[id.Name] && i < len(inner.Elts); i++ {
+							if inner.Elts[i] == lit {
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
 		if c, ok := parent.(*ast.CallExpr); ok {
 			if n, ok := codeArgs[callName(c)]; ok {
 				for i := 0; i < n && i < len(c.Args); i++ {
@@ -244,16 +260,6 @@ func readCatalog(t *testing.T) File {
 		t.Fatal(err)
 	}
 	return f
-}
-
-func countVerbs(s string) int {
-	n := 0
-	for _, v := range verb.FindAllString(s, -1) {
-		if v != "%%" {
-			n++
-		}
-	}
-	return n
 }
 
 // TestServerTextsHaveEnglish: todo texto de tela do servidor tem inglês, e nada sobra.

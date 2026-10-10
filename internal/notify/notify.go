@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/edvitor13/vpserver-monitoring/internal/ai"
+	"github.com/edvitor13/vpserver-monitoring/internal/i18n"
 	"github.com/edvitor13/vpserver-monitoring/internal/monitor"
 )
 
@@ -41,7 +42,7 @@ const (
 // Source é o que o serviço precisa do monitor.
 type Source interface {
 	Overview() monitor.Overview
-	Summary(kind string, now time.Time) string
+	Summary(kind string, now time.Time, lang string) string
 	PeriodOf(kind string, now time.Time) monitor.Period
 	AIContext() string
 	AI() ai.Executor
@@ -72,6 +73,7 @@ type Config struct {
 	QuietTo    string          `json:"quietTo"`    // "07:00"
 	PanelURL   string          `json:"panelUrl"`   // link nas mensagens (a tela manda o endereço dela)
 	MaxPerHour int             `json:"maxPerHour"` // mensagens por hora por este WhatsApp (0 = padrão)
+	Lang       string          `json:"lang"`       // idioma das mensagens ("" = português; a tela grava o de quem configurou)
 }
 
 // perHour é o limite de mensagens por hora que vale agora.
@@ -358,19 +360,20 @@ func (s *Service) alertMessage(fire []*tracked, server string) message {
 	})
 	top := fire[0]
 	m := message{kind: top.Cat, urgent: top.Level == "crit"}
-	note := func(t *tracked) string {
+	// título com a nota no mesmo formato (a tradução reconhece a linha inteira)
+	title := func(t *tracked) string {
 		switch {
 		case t.Sent && levelRank[t.Level] > levelRank[t.SentLevel]:
-			return " _(piorou)_"
+			return fmt.Sprintf("*%s* _(piorou)_", t.Title)
 		case t.Sent:
-			return " _(continua)_"
+			return fmt.Sprintf("*%s* _(continua)_", t.Title)
 		}
-		return ""
+		return "*" + t.Title + "*"
 	}
 	var b strings.Builder
 	if len(fire) == 1 {
 		head := map[string]string{"crit": "Urgente", "warn": "Alerta", "info": "Aviso"}[top.Level]
-		fmt.Fprintf(&b, "%s *%s · %s*\n*%s*%s", emoji(top.Level), head, server, top.Title, note(top))
+		fmt.Fprintf(&b, "%s *%s · %s*\n%s", emoji(top.Level), head, server, title(top))
 		if top.Detail != "" {
 			b.WriteString("\n" + top.Detail)
 		}
@@ -378,7 +381,7 @@ func (s *Service) alertMessage(fire []*tracked, server string) message {
 	} else {
 		fmt.Fprintf(&b, "%s *%d alertas · %s*", emoji(top.Level), len(fire), server)
 		for _, t := range fire {
-			fmt.Fprintf(&b, "\n\n%s *%s*%s", emoji(t.Level), t.Title, note(t))
+			b.WriteString("\n\n" + emoji(t.Level) + " " + title(t))
 			if t.Detail != "" {
 				b.WriteString("\n" + t.Detail)
 			}
@@ -678,7 +681,7 @@ func (s *Service) scheduledMessage(ctx context.Context, kind string, now time.Ti
 	m := message{kind: kind, title: k.Label, done: done}
 	switch kind {
 	case "daily", "weekly", "monthly":
-		m.text = s.src.Summary(kind, now)
+		m.text = s.src.Summary(kind, now, s.lang())
 		if kind == "daily" && s.isOn("ai_daily") && s.aiClient() != nil {
 			p := s.src.PeriodOf("daily", now)
 			txt, err := s.runAI(ctx, fmt.Sprintf(promptDaily, p.Label), 12)
@@ -739,7 +742,8 @@ func (s *Service) runAI(ctx context.Context, task string, lines int) (string, er
 		return "", errors.New("a IA não está configurada")
 	}
 	var b strings.Builder
-	_, err := ai.Converse(ctx, cli, s.src.AIContext()+fmt.Sprintf(whatsappStyle, lines), []ai.Message{ai.Text("user", task)}, s.src.AI(),
+	system := s.src.AIContext() + fmt.Sprintf(whatsappStyle, lines) + i18n.AINote(s.lang())
+	_, err := ai.Converse(ctx, cli, system, []ai.Message{ai.Text("user", task)}, s.src.AI(),
 		func(e ai.Event) {
 			switch e.Type {
 			case "tool":
@@ -869,10 +873,38 @@ func (s *Service) blockedLocked(manual bool) string {
 	return ""
 }
 
+// lang é o idioma das mensagens ("" = português).
+func (s *Service) lang() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.Lang == "" {
+		return i18n.Default
+	}
+	return s.cfg.Lang
+}
+
+// Lang é o idioma escolhido em Notificações ("" = ainda não escolhido).
+func (s *Service) Lang() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg.Lang
+}
+
+// out traduz uma mensagem pronta (escrita em português) para o idioma das
+// mensagens: linha por linha, pelo catálogo do servidor (i18n.Message).
+func (s *Service) out(text string) string {
+	if lang := s.lang(); lang != i18n.Default {
+		return i18n.Message(lang, text)
+	}
+	return text
+}
+
 // deliver manda (ou segura no silêncio) e registra. Alertas que não saíram
-// (WhatsApp desconectado, sem destino) ficam pendentes e tentam de novo.
+// (WhatsApp desconectado, sem destino) ficam pendentes e tentam de novo. O
+// texto sai no idioma das mensagens (e é ele que fica no registro).
 func (s *Service) deliver(ctx context.Context, m message) bool {
 	now := s.now()
+	m.text = s.out(m.text)
 	s.mu.Lock()
 	cfg := s.cfg
 	if reason := s.blockedLocked(m.manual); reason != "" {

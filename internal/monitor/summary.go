@@ -8,19 +8,15 @@ import (
 	"time"
 
 	"github.com/edvitor13/vpserver-monitoring/internal/docker"
+	"github.com/edvitor13/vpserver-monitoring/internal/i18n"
 	"github.com/edvitor13/vpserver-monitoring/internal/store"
 )
 
 // Resumos das notificações (WhatsApp). Os períodos são fechados, no fuso do
 // painel: "daily" = ontem, "weekly" = os 7 dias até ontem, "monthly" = o mês
 // anterior. O texto já sai no formato do WhatsApp (*negrito*, "•") e com os
-// mesmos números da tela.
-
-var (
-	weekdayNames = [...]string{"domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"}
-	monthNames   = [...]string{"janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto",
-		"setembro", "outubro", "novembro", "dezembro"}
-)
+// mesmos números da tela. O texto é escrito em português e traduzido no envio
+// (i18n.Message); só as datas já saem no formato do idioma.
 
 // Period é o intervalo [From, To) de um resumo.
 type Period struct {
@@ -32,6 +28,10 @@ type Period struct {
 
 // PeriodOf devolve o período fechado de um resumo (daily, weekly ou monthly).
 func (m *Monitor) PeriodOf(kind string, now time.Time) Period {
+	return m.periodOf(kind, now, i18n.Default)
+}
+
+func (m *Monitor) periodOf(kind string, now time.Time, lang string) Period {
 	loc := m.cfg.Loc
 	n := now.In(loc)
 	today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, loc)
@@ -40,17 +40,17 @@ func (m *Monitor) PeriodOf(kind string, now time.Time) Period {
 	case "weekly":
 		p.From, p.To = today.AddDate(0, 0, -7), today
 		p.Title = "Resumo da semana"
-		p.Label = p.From.Format("02/01") + " a " + p.To.AddDate(0, 0, -1).Format("02/01")
+		p.Label = i18n.DayMonth(lang, p.From) + " – " + i18n.DayMonth(lang, p.To.AddDate(0, 0, -1))
 	case "monthly":
 		first := time.Date(n.Year(), n.Month(), 1, 0, 0, 0, 0, loc)
 		p.From, p.To = first.AddDate(0, -1, 0), first
-		p.Title = "Fechamento de " + monthNames[p.From.Month()-1]
-		p.Label = fmt.Sprintf("%s de %d", monthNames[p.From.Month()-1], p.From.Year())
+		p.Title = "Fechamento do mês"
+		p.Label = i18n.MonthYear(lang, p.From)
 	default:
 		p.Kind = "daily"
 		p.From, p.To = today.AddDate(0, 0, -1), today
 		p.Title = "Resumo de ontem"
-		p.Label = weekdayNames[p.From.Weekday()] + ", " + p.From.Format("02/01")
+		p.Label = i18n.Weekday(lang, p.From.Weekday()) + ", " + i18n.DayMonth(lang, p.From)
 	}
 	return p
 }
@@ -111,19 +111,18 @@ func tiny(v float64) string {
 	return pctS(v)
 }
 
-// Summary monta o resumo de um período (daily, weekly ou monthly).
-func (m *Monitor) Summary(kind string, now time.Time) string {
+// Summary monta o resumo de um período (daily, weekly ou monthly), com as
+// datas no formato de lang (o texto é traduzido no envio).
+func (m *Monitor) Summary(kind string, now time.Time, lang string) string {
 	o := m.Overview() // antes de travar: o Overview trava sozinho
-	p := m.PeriodOf(kind, now)
+	p := m.periodOf(kind, now, lang)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	from, to := p.From.Unix(), p.To.Unix()
-	at := func(t int64) string {
-		if p.Kind == "daily" {
-			return "às " + time.Unix(t, 0).In(m.cfg.Loc).Format("15:04")
-		}
-		return "em " + time.Unix(t, 0).In(m.cfg.Loc).Format("02/01 15:04")
+	when := func(t int64) string {
+		tt := time.Unix(t, 0).In(m.cfg.Loc)
+		return i18n.DayMonth(lang, tt) + " " + tt.Format("15:04")
 	}
 	var b strings.Builder
 	line := func(f string, a ...any) { fmt.Fprintf(&b, f+"\n", a...) }
@@ -131,7 +130,7 @@ func (m *Monitor) Summary(kind string, now time.Time) string {
 	line("📊 *%s · %s*", p.Title, o.Server.Name)
 	line("_%s_", p.Label)
 	if m.st.Created > from {
-		line("_(o painel coleta desde %s)_", m.when(m.st.Created))
+		line("_(o painel coleta desde %s)_", when(m.st.Created))
 	}
 
 	// servidor
@@ -142,33 +141,37 @@ func (m *Monitor) Summary(kind string, now time.Time) string {
 	if cpu.n == 0 {
 		line("• Sem dados de CPU e memória neste período.")
 	} else {
-		cmp := ""
+		// cada valor separado no formato: a tradução reconhece um por um
+		avg := pctS(cpu.avg)
 		if p.Kind != "daily" {
 			q := p.prev()
 			if pr := m.st.Host.Query(q.From.Unix(), q.To.Unix(), 2000, "cpu"); m.st.Created <= q.From.Unix() {
 				if pc := usageOf(pr.T, pr.Cols["cpu"]); pc.n > 0 {
-					cmp = " (antes: " + pctS(pc.avg) + ")"
+					avg = fmt.Sprintf("%s (antes: %s)", avg, pctS(pc.avg))
 				}
 			}
 		}
-		line("• CPU: média %s%s · pico %s %s", pctS(cpu.avg), cmp, pctS(cpu.peak), at(cpu.peakT))
-		total := ""
-		if o.Host.MemTotal > 0 {
-			total = " de " + size(o.Host.MemTotal)
+		if p.Kind == "daily" {
+			line("• CPU: média %s · pico %s às %s", avg, pctS(cpu.peak), time.Unix(cpu.peakT, 0).In(m.cfg.Loc).Format("15:04"))
+		} else {
+			line("• CPU: média %s · pico %s em %s", avg, pctS(cpu.peak), when(cpu.peakT))
 		}
-		line("• Memória: média %s · pico %s%s", size(uint64(mem.avg)), size(uint64(mem.peak)), total)
+		if o.Host.MemTotal > 0 {
+			line("• Memória: média %s · pico %s de %s", size(uint64(mem.avg)), size(uint64(mem.peak)), size(o.Host.MemTotal))
+		} else {
+			line("• Memória: média %s · pico %s", size(uint64(mem.avg)), size(uint64(mem.peak)))
+		}
 	}
 	if o.Host.FSTotal > 0 {
-		grow := ""
-		if fs.n > 1 {
-			if d := fs.last - fs.first; d >= 0 {
-				grow = " · +" + size(uint64(d)) + " no período"
-			} else {
-				grow = " · −" + size(uint64(-d)) + " no período"
-			}
+		used := pctS(float64(o.Host.FSUsed) / float64(o.Host.FSTotal) * 100)
+		switch d := fs.last - fs.first; {
+		case fs.n > 1 && d >= 0:
+			line("• Disco: %s usado (%s de %s) · +%s no período", used, size(o.Host.FSUsed), size(o.Host.FSTotal), size(uint64(d)))
+		case fs.n > 1:
+			line("• Disco: %s usado (%s de %s) · −%s no período", used, size(o.Host.FSUsed), size(o.Host.FSTotal), size(uint64(-d)))
+		default:
+			line("• Disco: %s usado (%s de %s)", used, size(o.Host.FSUsed), size(o.Host.FSTotal))
 		}
-		line("• Disco: %s usado (%s de %s)%s", pctS(float64(o.Host.FSUsed)/float64(o.Host.FSTotal)*100),
-			size(o.Host.FSUsed), size(o.Host.FSTotal), grow)
 	}
 	var tx, rx uint64
 	for _, d := range p.days() {
@@ -216,7 +219,7 @@ func (m *Monitor) Summary(kind string, now time.Time) string {
 	}
 	line("")
 	line("*Aplicações* · %d de %d no ar", up, total)
-	top := func(label string, val func(appUse) float64, f func(float64) string) {
+	top := func(format string, val func(appUse) float64, f func(float64) string) {
 		sort.Slice(apps, func(i, j int) bool { return val(apps[i]) > val(apps[j]) })
 		var parts []string
 		for _, a := range apps {
@@ -226,12 +229,12 @@ func (m *Monitor) Summary(kind string, now time.Time) string {
 			parts = append(parts, a.name+" "+f(val(a)))
 		}
 		if len(parts) > 0 {
-			line("• %s: %s", label, strings.Join(parts, " · "))
+			line(format, strings.Join(parts, " · "))
 		}
 	}
-	top("Mais CPU", func(a appUse) float64 { return a.cpu }, pctS)
-	top("Mais memória", func(a appUse) float64 { return a.mem }, func(v float64) string { return size(uint64(v)) })
-	top("Mais saída", func(a appUse) float64 { return a.tx }, func(v float64) string { return dataSize(uint64(v)) })
+	top("• Mais CPU: %s", func(a appUse) float64 { return a.cpu }, pctS)
+	top("• Mais memória: %s", func(a appUse) float64 { return a.mem }, func(v float64) string { return size(uint64(v)) })
+	top("• Mais saída: %s", func(a appUse) float64 { return a.tx }, func(v float64) string { return dataSize(uint64(v)) })
 
 	// ocorrências
 	crashes, ooms := map[string]int{}, map[string]int{}

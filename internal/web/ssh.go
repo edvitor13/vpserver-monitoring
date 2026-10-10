@@ -578,7 +578,7 @@ func (s *Server) sshAI(w http.ResponseWriter, r *http.Request) {
 			recent = sb.String()
 		}
 	}
-	system := fmt.Sprintf(sshAIPrompt, srv, osName, who, cwd, recent) + aiLangNote(reqLang(r))
+	system := fmt.Sprintf(sshAIPrompt, srv, osName, who, cwd, recent) + i18n.AINote(reqLang(r))
 	msgs := append([]ai.Message{ai.Text("system", system)}, history...)
 
 	h := w.Header()
