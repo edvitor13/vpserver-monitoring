@@ -643,8 +643,8 @@
   // suspenso. O "Mais" do celular usa os mesmos grupos. [chave, nome, ícone, seções]
   const NAV = ['overview', 'infos', 'apps', 'logs',
     ['res', 'Recursos', 'cpu', ['traffic', 'system', 'limits']],
-    ['ops', 'Manutenção', 'broom', ['cleanup', 'backups', 'ssh']],
-    'ai',
+    ['ops', 'Manutenção', 'broom', ['cleanup', 'backups']],
+    'ssh', 'ai',
     ['adm', 'Administração', 'gear', ['servers', 'users', 'notify']]];
   const TAB_DESC = {
     traffic: 'Tráfego por app e do mês', system: 'Processos, disco e Docker', limits: 'Cotas do plano grátis',
