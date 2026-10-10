@@ -639,6 +639,39 @@
     ['system', 'Sistema', 'server', 'Sistema'], ['limits', 'Limites', 'load', 'Limites'],
     ['cleanup', 'Limpeza', 'broom', 'Limpeza'], ['backups', 'Backups', 'db', 'Backups'], ['ssh', 'SSH', 'shell', 'SSH'], ['users', 'Usuários', 'users', 'Usuários'],
     ['ai', 'IA', 'spark', 'IA'], ['notify', 'Notificações', 'bell', 'Avisos']]; // IA e WhatsApp juntas, no fim
+  // Menu de cima (computador): as seções do dia a dia soltas e o resto em grupos com menu
+  // suspenso. O "Mais" do celular usa os mesmos grupos. [chave, nome, ícone, seções]
+  const NAV = ['overview', 'infos', 'apps', 'logs',
+    ['res', 'Recursos', 'cpu', ['traffic', 'system', 'limits']],
+    ['ops', 'Manutenção', 'broom', ['cleanup', 'backups']],
+    'ssh', 'ai',
+    ['adm', 'Administração', 'gear', ['servers', 'users', 'notify']]];
+  const TAB_DESC = {
+    traffic: 'Tráfego por app e do mês', system: 'Processos, disco e Docker', limits: 'Cotas do plano grátis',
+    cleanup: 'Cache, imagens e logs do Docker', backups: 'Bancos para o R2 ou S3', ssh: 'Comandos no servidor, em chat',
+    servers: 'Outros painéis conectados', users: 'Quem entra e o que pode', notify: 'Avisos pelo WhatsApp',
+  };
+  // o menu com só o que esta pessoa vê: grupo vazio some, grupo de uma seção vira seção solta
+  function navItems() {
+    const vis = visibleTabs();
+    const byKey = new Map(vis.map((t) => [t[0], t]));
+    const used = new Set();
+    const out = [];
+    for (const n of NAV) {
+      if (typeof n === 'string') {
+        if (byKey.has(n)) { out.push({ tab: byKey.get(n) }); used.add(n); }
+        continue;
+      }
+      const [g, label, ic, keys] = n;
+      const items = keys.filter((k) => byKey.has(k)).map((k) => byKey.get(k));
+      items.forEach(([k]) => used.add(k));
+      if (items.length === 1) out.push({ tab: items[0] });
+      else if (items.length) out.push({ group: g, label, icon: ic, items });
+    }
+    vis.filter(([k]) => !used.has(k)).forEach((t) => out.push({ tab: t })); // seção nova fora do NAV: solta, no fim
+    return out;
+  }
+  const groupOf = (tab) => { const n = NAV.find((x) => typeof x !== 'string' && x[3].includes(tab)); return n ? n[0] : ''; };
   const BNAV = ['overview', 'apps', 'infos', 'ai']; // no celular, o resto fica em "Mais"
   // só as visíveis (em outro servidor não há IA): completa com Servidores/Banda
   const bnavTabs = () => {
@@ -663,8 +696,27 @@
     && (!S.remote || (REMOTE_TABS.has(k) && (k !== 'logs' || S.remote.logs || S.remote.control))));
   const tabHref = (k) => `#/${k === 'overview' ? '' : k}`;
   const countHTML = (k) => (k === 'infos' ? '<span class="count infos-count" hidden></span>' : '');
+  // Menu de cima ou o de baixo (celular): o de baixo vale até 720 px e também quando as
+  // seções não cabem na largura (a medida é do menu de cima de verdade, com as seções que
+  // esta pessoa vê).
+  function fitNav() {
+    const root = document.documentElement;
+    const tabs = $('.top .tabs');
+    if (!tabs) { root.classList.remove('nav-compact'); return; }
+    const was = root.classList.contains('nav-compact');
+    let compact = window.innerWidth <= 720;
+    if (!compact) {
+      root.classList.remove('nav-compact');
+      compact = tabs.scrollWidth > tabs.clientWidth + 1;
+    }
+    root.classList.toggle('nav-compact', compact);
+    if (compact !== was && $('.nav-menu')) closeDrawer();
+  }
+  let fitT = 0;
+  window.addEventListener('resize', () => { clearTimeout(fitT); fitT = setTimeout(fitNav, 60); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitNav);
   function renderShell() {
-    setTimeout(() => { renderPill(); renderStrip(); }, 0);
+    setTimeout(() => { renderPill(); renderStrip(); fitNav(); }, 0);
     $('#app').innerHTML = `
       <header class="top"><div class="top-in">
         <div class="bar">
@@ -682,7 +734,9 @@
             <button class="icon-btn" type="button" data-act="logout" aria-label="Sair" title="Sair">${icon('logout')}</button>
           </div>
         </div>
-        <nav class="tabs" aria-label="Seções">${visibleTabs().map(([k, l, ic]) => `<a class="tab" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}${l}${countHTML(k)}</a>`).join('')}</nav>
+        <nav class="tabs" aria-label="Seções">${navItems().map((n) => (n.tab
+          ? `<a class="tab" href="${tabHref(n.tab[0])}" data-tab="${n.tab[0]}">${icon(n.tab[2])}${n.tab[1]}${countHTML(n.tab[0])}</a>`
+          : `<button class="tab tab-group" type="button" data-act="nav-menu" data-group="${n.group}" aria-haspopup="menu" aria-expanded="false">${icon(n.icon)}${n.label}<span class="tab-chev">${icon('chev')}</span></button>`)).join('')}</nav>
       </div><div class="remote-strip" id="remote-strip" hidden></div></header>
       <main id="view"></main>
       <footer class="foot">${versionHTML()}</footer>
@@ -785,6 +839,39 @@
     S.drawer = { update() {}, reload() {}, destroy() {} };
     $('.srv-item.on', m)?.focus();
   }
+  // menu suspenso de um grupo do menu de cima (mesma camada do seletor de servidores)
+  function openNavMenu(btn) {
+    closeDrawer();
+    const n = navItems().find((x) => x.group === btn.dataset.group);
+    if (!n) return;
+    const rect = btn.getBoundingClientRect();
+    const scrim = document.createElement('div');
+    scrim.className = 'scrim-clear';
+    scrim.dataset.act = 'close';
+    const m = document.createElement('div');
+    m.className = 'srv-menu nav-menu';
+    m.setAttribute('role', 'menu');
+    m.setAttribute('aria-label', n.label);
+    m.dataset.group = n.group;
+    m.innerHTML = n.items.map(([k, l, ic]) => `<a class="srv-item nav-item${k === S.tab ? ' on' : ''}" role="menuitem" href="${tabHref(k)}" data-act="close">
+      ${icon(ic)}<span class="srv-item-t"><b>${esc(l)}</b><small>${esc(TAB_DESC[k] || '')}</small></span>${k === S.tab ? icon('ok') : ''}</a>`).join('');
+    document.body.append(scrim, m);
+    const w = Math.min(300, window.innerWidth - 24);
+    m.style.width = `${w}px`;
+    m.style.top = `${Math.round(rect.bottom + 4)}px`;
+    m.style.left = `${Math.round(Math.max(12, Math.min(rect.left, window.innerWidth - w - 12)))}px`;
+    btn.setAttribute('aria-expanded', 'true');
+    S.drawer = { update() {}, reload() {}, destroy() { btn.setAttribute('aria-expanded', 'false'); } };
+    const items = $$('.nav-item', m);
+    m.addEventListener('keydown', (e) => {
+      const i = items.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+      } else if (e.key === 'Tab') closeDrawer();
+    });
+    (items.find((a) => a.classList.contains('on')) || items[0]).focus();
+  }
   function isDark() {
     const t = document.documentElement.getAttribute('data-theme');
     return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
@@ -809,11 +896,26 @@
     $('#hdr-upd').textContent = o.updated ? `atualizado ${hms(o.updated * 1000)}` : '';
     renderPill();
     markTabs();
+    fitNav();
   }
   function markTabs() {
     $$('.tab, .bn[data-tab], .sheet-item[data-tab]').forEach((t) => t.setAttribute('aria-current', t.dataset.tab === S.tab ? 'page' : 'false'));
+    $$('.tab-group').forEach((b) => b.setAttribute('aria-current', b.dataset.group === groupOf(S.tab) ? 'page' : 'false'));
     const more = $('#bn-more');
     if (more) more.setAttribute('aria-current', bnavTabs().includes(S.tab) ? 'false' : 'page');
+  }
+  // seções do "Mais": as soltas que não estão no menu de baixo e, em seguida, os grupos
+  function moreSections() {
+    const bn = bnavTabs();
+    const cell = ([k, l, ic]) => `<a class="sheet-item" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${l}</span></a>`;
+    const loose = [];
+    const groups = [];
+    for (const n of navItems()) {
+      if (n.tab) { if (!bn.includes(n.tab[0])) loose.push(n.tab); continue; }
+      const items = n.items.filter(([k]) => !bn.includes(k));
+      if (items.length) groups.push(`<div class="sheet-h">${esc(n.label)}</div><div class="sheet-grid">${items.map(cell).join('')}</div>`);
+    }
+    return (loose.length ? `<div class="sheet-grid">${loose.map(cell).join('')}</div>` : '') + groups.join('');
   }
   // "Mais" no celular: as outras seções, Configurações, tema e sair
   function openMore() {
@@ -827,9 +929,8 @@
     sh.setAttribute('aria-modal', 'true');
     sh.setAttribute('aria-label', 'Mais seções');
     sh.innerHTML = `<div class="sheet-grip"></div>
-      <div class="sheet-who">${icon('user')}<span><b>${esc(S.me.user)}</b> · ${esc(roleText(S.me))}</span></div><div class="sheet-grid">
-      ${visibleTabs().filter(([k]) => !bnavTabs().includes(k)).map(([k, l, ic]) => `<a class="sheet-item" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${l}</span></a>`).join('')}
-      </div><div class="sheet-sep"></div><div class="sheet-grid">
+      <div class="sheet-who">${icon('user')}<span><b>${esc(S.me.user)}</b> · ${esc(roleText(S.me))}</span></div>${moreSections()}
+      <div class="sheet-sep"></div><div class="sheet-grid">
       ${canInstall() ? `<button class="sheet-item install-only" type="button" data-act="install">${icon('install')}<span>Instalar app</span></button>` : ''}
       <button class="sheet-item" type="button" data-act="settings">${icon('gear')}<span>Configurações</span></button>
       <button class="sheet-item" type="button" data-act="theme">${icon(isDark() ? 'sun' : 'moon')}<span>${isDark() ? 'Tema claro' : 'Tema escuro'}</span></button>
@@ -1252,7 +1353,8 @@
       <div class="field"><label for="acc-r">Repita a nova senha</label><input class="input" id="acc-r" type="password" autocomplete="new-password" minlength="10" required></div>
       <div class="muted" style="font-size:.78rem">Pelo menos 10 caracteres (uma frase com espaços vale). Usuário: 3 a 32 letras, números, ponto, hífen ou _.</div>
       <div class="form-err" id="acc-err" role="alert"></div>
-      <button class="btn primary" type="submit">${setup ? 'Salvar e continuar' : 'Salvar'}</button>
+      <div class="controls"><button class="btn primary" type="submit">${setup ? 'Salvar e continuar' : 'Salvar'}</button>
+        ${setup ? '' : '<button class="btn" type="button" id="acc-cancel">Cancelar</button>'}</div>
     </form>`;
   }
   function bindAccess(prefill, onDone) {
@@ -1451,12 +1553,26 @@
         api('/api/notify').then((j) => render(j.notify)).catch((ex) => { if (ex.message !== 'login') body.innerHTML = `<div class="form-err">${esc(ex.message)}</div>`; });
       } else {
         const origin = me.passwordSource === 'panel' ? `Senha trocada pelo painel em ${dt(me.passwordChanged)}.` : 'Hoje vale a senha definida no .env do servidor.';
-        body.innerHTML = `<p class="muted" style="margin:0 0 12px;font-size:.84rem">${esc(origin)} Ao salvar, as outras sessões (outros aparelhos) saem.</p>${accessFormHTML(me.user, false)}
+        body.innerHTML = `<section class="tf-section first" id="pw-sec"></section>
           <section class="tf-section" id="tf-sec"></section>
           ${canInstall() ? `<section class="tf-section install-only"><h3>${icon('install')}App no celular</h3>
             <p class="muted">Instale o painel como app: ícone na tela inicial, abre em tela cheia e se atualiza sozinho quando sai versão nova.</p>
             <div><button class="btn" type="button" data-act="install">${icon('install')}Instalar app</button></div></section>` : ''}`;
-        bindAccess('', (j) => { closeDrawer(); toast(`Acesso salvo (usuário ${j.user}). Os outros aparelhos vão precisar entrar de novo.`); });
+        // senha e usuário: um resumo e o botão; o formulário só abre quando a pessoa pede
+        const pw = $('#pw-sec', body);
+        const closedPw = () => {
+          pw.innerHTML = `<h3>${icon('key')}Senha e usuário</h3>
+            <p class="muted"><span>Usuário <b>${esc(me.user)}</b> · ${esc(origin)}</span></p>
+            <div><button class="btn" type="button" id="pw-open">${icon('key')}Trocar senha ou usuário</button></div>`;
+          $('#pw-open', pw).addEventListener('click', openPw);
+        };
+        const openPw = () => {
+          pw.innerHTML = `<h3>${icon('key')}Trocar senha ou usuário</h3>
+            <p class="muted">Ao salvar, as outras sessões (outros aparelhos) saem.</p>${accessFormHTML(me.user, false)}`;
+          bindAccess('', (j) => { closeDrawer(); toast(`Acesso salvo (usuário ${j.user}). Os outros aparelhos vão precisar entrar de novo.`); });
+          $('#acc-cancel', pw).addEventListener('click', () => { closedPw(); $('#pw-open', pw).focus(); });
+        };
+        closedPw();
         const sec = $('#tf-sec', body);
         if (opts.enroll && !(me.twoFA || {}).enabled) {
           opts.enroll = false;
@@ -4019,6 +4135,13 @@
       if (a === 'psort') { S.procSort = v; systemView.reload && systemView.reload(); return; }
       if (a === 'more') { openMore(); return; }
       if (a === 'servers-menu') { if ($('.srv-menu')) closeDrawer(); else openServersMenu(act); return; }
+      if (a === 'nav-menu') {
+        const open = $('.nav-menu');
+        const same = open && open.dataset.group === act.dataset.group;
+        closeDrawer();
+        if (!same) openNavMenu(act);
+        return;
+      }
       if (a === 'pick-server') { pickServer(v); return; }
       if (a === 'update') { location.reload(); return; }
       if (a === 'install') { closeDrawer(); closeInstallBar(); installApp(); return; }

@@ -110,6 +110,17 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .tab:hover { color: var(--text); }
 .tab[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
 .tab .dot { width: 7px; height: 7px; border-radius: 50%; }
+.tab-group { font-family: inherit; }
+@media (max-width: 1100px) { .tab { padding: 9px 9px 11px; } } /* 9 itens cabem em 1024 px */
+.tab-chev { display: inline-flex; margin-left: -2px; }
+.tab-chev svg.i { width: 14px; height: 14px; transition: transform .15s; }
+.tab-group[aria-expanded="true"] { color: var(--text); }
+.tab-group[aria-expanded="true"] .tab-chev svg.i { transform: rotate(180deg); }
+.nav-item { text-decoration: none; }
+.nav-item > svg.i { flex: none; width: 18px; height: 18px; color: var(--text-2); }
+.nav-item.on > svg.i:first-child { color: var(--accent); }
+.nav-item > svg.i:last-child:not(:first-child) { color: var(--accent); }
+.sheet-h { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 700; margin: 14px 2px 8px; }
 .count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 99px; font-size: .72rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .count.crit { background: var(--critical); color: #fff; }
 .count.warn { background: var(--warning); color: #1a1a19; }
@@ -403,35 +414,37 @@ code { font-family: var(--mono); font-size: .9em; background: var(--surface-3); 
 
 /* ---------- celular: navegação embaixo (ao alcance do polegar) e "Mais" ---------- */
 .bnav { display: none; }
-@media (max-width: 720px) {
-  .top .tabs { display: none; }
-  .top-in { padding-bottom: 10px; }
-  .bar-actions .icon-btn { display: none; } /* tema, configurações e sair ficam no "Mais" */
-  main { padding-bottom: 12px; }
-  .foot:not(.foot-login) { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
-  .bnav {
-    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-    backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px);
-    border-top: 1px solid var(--border); padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
-  }
-  .bn {
-    display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 0 5px; min-height: 52px;
-    font-size: .68rem; font-weight: 600; color: var(--muted); text-decoration: none; background: none; border: 0;
-    cursor: pointer; position: relative; border-radius: 12px; -webkit-tap-highlight-color: transparent;
-  }
-  .bn svg.i { width: 22px; height: 22px; }
-  .bn[aria-current="page"] { color: var(--accent); }
-  .bn[aria-current="page"] svg.i { stroke-width: 2.3; }
-  .bn .count { position: absolute; top: 1px; left: calc(50% + 5px); min-width: 17px; height: 17px; font-size: .62rem; padding: 0 4px; }
-  .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
-  .chat-log { max-height: calc(100dvh - 390px); }
+/* Menu de baixo (celular): vale até 720 px e também quando o menu de cima não cabe na
+   largura (fitNav no app.js põe .nav-compact no <html>). */
+.nav-compact .top .tabs { display: none; }
+.nav-compact .top-in { padding-bottom: 10px; }
+.nav-compact .bar-actions .icon-btn { display: none; } /* tema, configurações e sair ficam no "Mais" */
+.nav-compact main { padding-bottom: 12px; }
+.nav-compact .foot:not(.foot-login) { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+.nav-compact .bnav {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px);
+  border-top: 1px solid var(--border); padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
 }
+.nav-compact .bn {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 0 5px; min-height: 52px;
+  font-size: .68rem; font-weight: 600; color: var(--muted); text-decoration: none; background: none; border: 0;
+  cursor: pointer; position: relative; border-radius: 12px; -webkit-tap-highlight-color: transparent;
+}
+.nav-compact .bn svg.i { width: 22px; height: 22px; }
+.nav-compact .bn[aria-current="page"] { color: var(--accent); }
+.nav-compact .bn[aria-current="page"] svg.i { stroke-width: 2.3; }
+.nav-compact .bn .count { position: absolute; top: 1px; left: calc(50% + 5px); min-width: 17px; height: 17px; font-size: .62rem; padding: 0 4px; }
+.nav-compact .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+.nav-compact .chat-log { max-height: calc(100dvh - 390px); }
 .sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 41; background: var(--bg); border-radius: 18px 18px 0 0;
   padding: 10px 16px calc(18px + env(safe-area-inset-bottom)); box-shadow: 0 -10px 30px rgba(0, 0, 0, .18);
   max-height: 85dvh; overflow-y: auto; border-top: 1px solid var(--border);
 }
+/* menu de baixo numa tela larga (o de cima não coube): o "Mais" não ocupa a largura toda */
+@media (min-width: 721px) { .sheet { left: 50%; right: auto; width: min(640px, 100%); transform: translateX(-50%); border-left: 1px solid var(--border); border-right: 1px solid var(--border); } }
 .sheet-grip { width: 40px; height: 4px; border-radius: 99px; background: var(--surface-3); margin: 0 auto 14px; }
 .sheet-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .sheet-item {
@@ -558,6 +571,7 @@ code.pass { font-size: 1.05rem; padding: 4px 8px; letter-spacing: .04em; backgro
 .linkish { border: 0; background: none; padding: 4px 0; color: var(--accent); cursor: pointer; font-size: .84rem; text-align: left; }
 .linkish:hover { text-decoration: underline; }
 .tf-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); display: grid; gap: 10px; }
+.tf-section.first { margin-top: 0; padding-top: 0; border-top: 0; }
 .tf-section h3 { display: flex; align-items: center; gap: 6px; }
 .tf-section > p { margin: 0; font-size: .84rem; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .tf-enroll { display: grid; gap: 12px; }
@@ -581,7 +595,7 @@ a.btn { text-decoration: none; color: inherit; }
 }
 .update-bar > span { display: inline-flex; align-items: center; gap: 8px; }
 .update-bar svg.i { color: var(--accent); width: 16px; height: 16px; }
-@media (max-width: 720px) { .update-bar { bottom: calc(80px + env(safe-area-inset-bottom)); } }
+.nav-compact .update-bar { bottom: calc(80px + env(safe-area-inset-bottom)); }
 
 /* ---------- instalar como app ---------- */
 .install-bar {
@@ -877,7 +891,8 @@ a.btn { text-decoration: none; color: inherit; }
 .ssh-logcard { width: min(980px, 100%); }
 .ssh-log-t { font-size: .78rem; overflow-wrap: anywhere; min-width: 180px; }
 .nowrap { white-space: nowrap; }
+.nav-compact .ssh-chat { height: calc(100dvh - 290px - env(safe-area-inset-bottom)); min-height: 320px; }
 @media (max-width: 720px) {
-  .ssh-chat { height: calc(100dvh - 290px - env(safe-area-inset-bottom)); min-height: 320px; padding: 10px; }
+  .ssh-chat { padding: 10px; }
   .ssh-bar-acts .btn { padding: 6px 9px; }
 }
