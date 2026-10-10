@@ -217,7 +217,7 @@ func (s *Server) stampIndex() {
 		return
 	}
 	html := string(s.rawIndex)
-	for _, f := range []string{"app.js", "app.css", "theme.js", "uPlot.iife.min.js", "uPlot.min.css", "manifest.webmanifest"} {
+	for _, f := range []string{"app.js", "app.css", "theme.js", "uPlot.iife.min.js", "uPlot.min.css", "manifest.webmanifest", "i18n/en.js"} {
 		html = strings.ReplaceAll(html, `"`+f+`"`, `"`+f+"?v="+s.version+`"`)
 	}
 	meta := `<meta name="vpmon-version" content="` + s.version + `">`
