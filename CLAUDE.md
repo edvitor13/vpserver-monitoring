@@ -55,6 +55,11 @@ mesma entrega quando são do mesmo assunto; assunto novo ganha issue própria.
   `internal/web/static/i18n/en.js` **no mesmo commit** (o `go test` falha se
   faltar, sobrar, perder `{0}`/tag ou se um texto com acento ficar fora do
   `T()`). Não use `t` como nome da função: `t` já é variável em vários lugares.
+  No Go, o texto de tela continua em português e a tradução entra em
+  `internal/i18n/en.json` no mesmo commit (o `go test ./internal/i18n/` lista o
+  que falta). Texto que a tela usa como código (área, nível, chave) não pode ir
+  para o catálogo; prefira `fmt.Sprintf` com o texto inteiro a frases montadas em
+  pedaços.
 - **Go 1.23 só com a biblioteca padrão** (o `go.mod` não tem dependências).
   Front em **HTML/CSS/JS puros**, sem build, embutidos no binário
   (`internal/web/static`). Biblioteca de terceiros só embutida no repositório,

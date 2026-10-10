@@ -185,7 +185,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/2fa/disable", s.private(s.twofaDisable))
 	mux.HandleFunc("POST /api/2fa/recovery", s.private(s.twofaRecovery))
 	mux.HandleFunc("POST /api/2fa/dismiss", s.private(s.twofaDismiss))
-	return secureHeaders(s.versionHeader(withGzip(mux)))
+	return secureHeaders(s.versionHeader(withGzip(s.translate(mux))))
 }
 
 var safeVersion = regexp.MustCompile(`[^A-Za-z0-9._-]`)
