@@ -32,6 +32,7 @@ import (
 	"github.com/edvitor13/vpserver-monitoring/internal/monitor"
 	"github.com/edvitor13/vpserver-monitoring/internal/notify"
 	"github.com/edvitor13/vpserver-monitoring/internal/setup"
+	"github.com/edvitor13/vpserver-monitoring/internal/sshchat"
 	"github.com/edvitor13/vpserver-monitoring/internal/web"
 )
 
@@ -179,6 +180,13 @@ func main() {
 	go fl.Client.Run(ctx)
 	go cl.Run(ctx)
 	go bk.Run(ctx)
+	// SSH pela tela (desligado até um administrador com 2FA ativar)
+	sc, err := sshchat.New(dataDir)
+	if err != nil {
+		slog.Error("SSH pela tela indisponível", "err", err)
+	} else {
+		go sc.Run(ctx)
+	}
 	defer fl.Central.Save()
 
 	// IA (DeepSeek), pelas variáveis DEEPSEEK_*. A chave também pode
@@ -195,6 +203,9 @@ func main() {
 
 	auth := web.NewAuth(user, pass, secret, env("VPMON_COOKIE_SECURE", "true") == "true", dataDir, forceChange)
 	ws := web.New(mon, auth, env("VPMON_TRUST_CF", "true") == "true", aiCfg, filepath.Join(dataDir, "settings.json"), nt, fl).WithCleanup(cl).WithBackup(bk).WithBuild(commit, built)
+	if sc != nil {
+		ws.WithSSH(sc)
+	}
 	fl.Client.SetLocal(ws.LocalView) // o central pode ler este painel (se compartilhado)
 	go fl.Client.RunViews(ctx)
 	srv := &http.Server{

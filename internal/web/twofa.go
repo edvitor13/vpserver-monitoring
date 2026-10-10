@@ -128,6 +128,25 @@ func (a *Auth) VerifySecond(name, code string) (string, int, error) {
 	return used, left, err
 }
 
+// VerifyTOTP confere só um código do app (os de recuperação não valem aqui):
+// é o que abre a sessão de SSH. O mesmo código não vale duas vezes.
+func (a *Auth) VerifyTOTP(name, code string) error {
+	return a.mutate(func(users []User) ([]User, error) {
+		i := findUser(users, name)
+		if i < 0 || users[i].TOTP == nil {
+			return nil, ErrNo2FA
+		}
+		t := *users[i].TOTP
+		step := matchTOTP(t.Secret, code, a.now(), t.Last)
+		if step < 0 {
+			return nil, ErrBadCode
+		}
+		t.Last = step
+		users[i].TOTP = &t
+		return users, nil
+	})
+}
+
 // DisableTOTP desliga o próprio 2FA (pede a senha e um código).
 func (a *Auth) DisableTOTP(name, pass, code string) error {
 	u, ok := a.Get(name)
