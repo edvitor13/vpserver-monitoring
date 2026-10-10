@@ -1,8 +1,10 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -122,5 +124,43 @@ func TestDiskUsageDangling(t *testing.T) {
 	// "d" não tem nome mas um contêiner usa: o Docker não apagaria
 	if du.DanglingCount != 2 || du.DanglingSize != 800+400 {
 		t.Fatalf("sem nome e sem uso: %d imagens, %d bytes", du.DanglingCount, du.DanglingSize)
+	}
+}
+
+func TestExecStreamsStdoutAndExitCode(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Method+" "+r.URL.Path)
+		switch {
+		case r.URL.Path == "/containers/banco1/exec":
+			var b struct {
+				Cmd []string
+				Env []string
+			}
+			json.NewDecoder(r.Body).Decode(&b)
+			if len(b.Cmd) != 3 || b.Cmd[0] != "sh" || len(b.Env) != 1 || b.Env[0] != "VPMON_DB=meu banco" {
+				t.Errorf("pedido do exec: %+v", b)
+			}
+			w.WriteHeader(201)
+			w.Write([]byte(`{"Id":"abc123"}`))
+		case r.URL.Path == "/exec/abc123/start":
+			w.Write(frame(1, "PGDMP"))
+			w.Write(frame(2, "aviso: algo\n"))
+			w.Write(frame(1, strings.Repeat("x", 70000)))
+			w.Write(frame(2, "fim do erro"))
+		case r.URL.Path == "/exec/abc123/json":
+			w.Write([]byte(`{"ExitCode":3,"Running":false}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	code, stderr, err := New(srv.URL).Exec(context.Background(), "banco1", []string{"sh", "-c", "pg_dump"}, []string{"VPMON_DB=meu banco"}, &out)
+	if err != nil || code != 3 || out.Len() != 5+70000 || !strings.HasPrefix(out.String(), "PGDMP") || !strings.HasSuffix(stderr, "fim do erro") {
+		t.Fatalf("exec: código %d, saída %d bytes, erro %q, %v", code, out.Len(), stderr, err)
+	}
+	if strings.Join(got, "|") != "POST /containers/banco1/exec|POST /exec/abc123/start|GET /exec/abc123/json" {
+		t.Fatalf("pedidos: %v", got)
 	}
 }

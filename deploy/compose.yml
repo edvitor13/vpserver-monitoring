@@ -98,12 +98,15 @@ services:
       - -listenip=0.0.0.0
       - -allowfrom=vpserver-monitor
       # ^ e $ são postos pelo proxy; nada de exec, de inspect (que mostraria o env), de stop, rm ou create
-      - -allowGET=(/v1\.[0-9]+)?/(_ping|version|info|system/df|events|containers/json|containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/logs)
+      - -allowGET=(/v1\.[0-9]+)?/(_ping|version|info|system/df|events|containers/json|containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/logs|exec/[a-f0-9]+/json)
       - -allowHEAD=(/v1\.[0-9]+)?/_ping
-      # as únicas escritas: Pausar/Retomar das apps (o painel recusa pausar a si mesmo) e
+      # as únicas escritas: Pausar/Retomar das apps (o painel recusa pausar a si mesmo),
       # as duas limpezas seguras da tela Limpeza (cache de build fora de uso e
-      # imagens sem nome; o Docker não apaga imagem que um contêiner usa)
-      - -allowPOST=(/v1\.[0-9]+)?/(containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/(pause|unpause)|build/prune|images/prune)
+      # imagens sem nome; o Docker não apaga imagem que um contêiner usa) e o exec
+      # dos Backups (criar, iniciar e consultar). ATENÇÃO: exec deixa rodar comando
+      # em qualquer contêiner; o painel só monta comandos fixos de dump, mas com ele
+      # comprometido isso fica exposto (decisão do dono do projeto: sem ajudante).
+      - -allowPOST=(/v1\.[0-9]+)?/(containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/(pause|unpause|exec)|exec/[a-f0-9]+/start|build/prune|images/prune)
       - -shutdowngracetime=5
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
