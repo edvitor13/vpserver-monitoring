@@ -35,9 +35,11 @@
     const out = (CAT && CAT[s]) || s;
     return vals ? out.replace(/\{(\d+)\}/g, (m, i) => (vals[i] !== undefined ? vals[i] : m)) : out;
   }
-  const langPickHTML = (save) => `<div class="lang-pick"><span class="lang-l">${icon('globe')}Idioma · Language</span>
-    <div class="seg" role="group" aria-label="Idioma · Language">${Object.entries(LANGS).map(([k, l]) => `<button type="button" data-act="lang"
-      data-v="${k}" data-save="${save ? 1 : 0}" aria-pressed="${k === LANG}" lang="${k}">${l}</button>`).join('')}</div></div>`;
+  const langSegHTML = (save) => `<div class="seg" role="group" aria-label="Idioma · Language">${Object.entries(LANGS).map(([k, l]) => `<button type="button"
+    data-act="lang" data-v="${k}" data-save="${save ? 1 : 0}" aria-pressed="${k === LANG}" lang="${k}">${l}</button>`).join('')}</div>`;
+  // na tela de login: uma caixa; em Configurações → Minha conta: uma seção como as outras
+  const langPickHTML = (save) => `<div class="lang-pick"><span class="lang-l">${icon('globe')}Idioma · Language</span>${langSegHTML(save)}</div>`;
+  const langSectionHTML = () => `<section class="tf-section first"><h3>${icon('globe')}Idioma · Language</h3><div>${langSegHTML(true)}</div></section>`;
   // o idioma salvo na conta vale nos aparelhos que ainda não escolheram um
   function followAccountLang(me) {
     if (!me || !LANGS[me.lang] || me.lang === LANG || store.get('lang', '')) return false;
@@ -1573,7 +1575,6 @@
       <button class="icon-btn st-close" type="button" data-act="close" aria-label="${T('Fechar')}">${icon('x')}</button>
       <div class="card-h"><div><h2 id="st-t">${icon('gear')}${T('Configurações')}</h2>
         <div class="muted st-who">${icon('user')}${esc(me.user)} · ${esc(roleText(me))} · ${esc(verLabel())}${verDate() ? ` ${T('de {0}', [esc(verDate())])}` : ''}</div></div></div>
-      ${langPickHTML(true)}
       ${tabs.length > 1 ? `<div class="seg" role="tablist" style="margin-bottom:14px">
         ${tabs.map(([k, l]) => `<button type="button" data-act="stab" data-v="${k}" aria-pressed="${tab === k}">${l}</button>`).join('')}</div>` : ''}
       <div id="st-body"></div></div>`;
@@ -1598,7 +1599,7 @@
         api('/api/notify').then((j) => render(j.notify)).catch((ex) => { if (ex.message !== 'login') body.innerHTML = `<div class="form-err">${esc(ex.message)}</div>`; });
       } else {
         const origin = me.passwordSource === 'panel' ? `${T('Senha trocada pelo painel em {0}.', [dt(me.passwordChanged)])}` : T('Hoje vale a senha definida no .env do servidor.');
-        body.innerHTML = `<section class="tf-section first" id="pw-sec"></section>
+        body.innerHTML = `${langSectionHTML()}<section class="tf-section" id="pw-sec"></section>
           <section class="tf-section" id="tf-sec"></section>
           ${canInstall() ? `<section class="tf-section install-only"><h3>${icon('install')}${T('App no celular')}</h3>
             <p class="muted">${T('Instale o painel como app: ícone na tela inicial, abre em tela cheia e se atualiza sozinho quando sai versão nova.')}</p>
