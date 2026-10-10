@@ -7,8 +7,8 @@ package chacha20poly1305
 import (
 	"encoding/binary"
 
-	"github.com/edvitor13/vpserver-monitoring/internal/xcrypto/chacha20"
 	"github.com/edvitor13/vpserver-monitoring/internal/xcrypto/alias"
+	"github.com/edvitor13/vpserver-monitoring/internal/xcrypto/chacha20"
 	"github.com/edvitor13/vpserver-monitoring/internal/xcrypto/poly1305"
 )
 
