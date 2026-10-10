@@ -571,6 +571,7 @@ code.pass { font-size: 1.05rem; padding: 4px 8px; letter-spacing: .04em; backgro
 .linkish { border: 0; background: none; padding: 4px 0; color: var(--accent); cursor: pointer; font-size: .84rem; text-align: left; }
 .linkish:hover { text-decoration: underline; }
 .tf-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); display: grid; gap: 10px; }
+.tf-section.first { margin-top: 0; padding-top: 0; border-top: 0; }
 .tf-section h3 { display: flex; align-items: center; gap: 6px; }
 .tf-section > p { margin: 0; font-size: .84rem; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .tf-enroll { display: grid; gap: 12px; }

@@ -1353,7 +1353,8 @@
       <div class="field"><label for="acc-r">Repita a nova senha</label><input class="input" id="acc-r" type="password" autocomplete="new-password" minlength="10" required></div>
       <div class="muted" style="font-size:.78rem">Pelo menos 10 caracteres (uma frase com espaços vale). Usuário: 3 a 32 letras, números, ponto, hífen ou _.</div>
       <div class="form-err" id="acc-err" role="alert"></div>
-      <button class="btn primary" type="submit">${setup ? 'Salvar e continuar' : 'Salvar'}</button>
+      <div class="controls"><button class="btn primary" type="submit">${setup ? 'Salvar e continuar' : 'Salvar'}</button>
+        ${setup ? '' : '<button class="btn" type="button" id="acc-cancel">Cancelar</button>'}</div>
     </form>`;
   }
   function bindAccess(prefill, onDone) {
@@ -1552,12 +1553,26 @@
         api('/api/notify').then((j) => render(j.notify)).catch((ex) => { if (ex.message !== 'login') body.innerHTML = `<div class="form-err">${esc(ex.message)}</div>`; });
       } else {
         const origin = me.passwordSource === 'panel' ? `Senha trocada pelo painel em ${dt(me.passwordChanged)}.` : 'Hoje vale a senha definida no .env do servidor.';
-        body.innerHTML = `<p class="muted" style="margin:0 0 12px;font-size:.84rem">${esc(origin)} Ao salvar, as outras sessões (outros aparelhos) saem.</p>${accessFormHTML(me.user, false)}
+        body.innerHTML = `<section class="tf-section first" id="pw-sec"></section>
           <section class="tf-section" id="tf-sec"></section>
           ${canInstall() ? `<section class="tf-section install-only"><h3>${icon('install')}App no celular</h3>
             <p class="muted">Instale o painel como app: ícone na tela inicial, abre em tela cheia e se atualiza sozinho quando sai versão nova.</p>
             <div><button class="btn" type="button" data-act="install">${icon('install')}Instalar app</button></div></section>` : ''}`;
-        bindAccess('', (j) => { closeDrawer(); toast(`Acesso salvo (usuário ${j.user}). Os outros aparelhos vão precisar entrar de novo.`); });
+        // senha e usuário: um resumo e o botão; o formulário só abre quando a pessoa pede
+        const pw = $('#pw-sec', body);
+        const closedPw = () => {
+          pw.innerHTML = `<h3>${icon('key')}Senha e usuário</h3>
+            <p class="muted"><span>Usuário <b>${esc(me.user)}</b> · ${esc(origin)}</span></p>
+            <div><button class="btn" type="button" id="pw-open">${icon('key')}Trocar senha ou usuário</button></div>`;
+          $('#pw-open', pw).addEventListener('click', openPw);
+        };
+        const openPw = () => {
+          pw.innerHTML = `<h3>${icon('key')}Trocar senha ou usuário</h3>
+            <p class="muted">Ao salvar, as outras sessões (outros aparelhos) saem.</p>${accessFormHTML(me.user, false)}`;
+          bindAccess('', (j) => { closeDrawer(); toast(`Acesso salvo (usuário ${j.user}). Os outros aparelhos vão precisar entrar de novo.`); });
+          $('#acc-cancel', pw).addEventListener('click', () => { closedPw(); $('#pw-open', pw).focus(); });
+        };
+        closedPw();
         const sec = $('#tf-sec', body);
         if (opts.enroll && !(me.twoFA || {}).enabled) {
           opts.enroll = false;
