@@ -325,7 +325,7 @@
     return path;
   }
   async function api(path, opts = {}) {
-    const headers = { 'X-Requested-With': 'vpmon' };
+    const headers = { 'X-Requested-With': 'vpmon', 'X-VPMon-Lang': LANG }; // o servidor responde no idioma da tela
     if (opts.body) headers['Content-Type'] = 'application/json';
     const r = await fetch(remotePath(path, (opts.method || 'GET').toUpperCase()), { credentials: 'same-origin', ...opts, headers });
     checkVersion(r.headers.get('X-VPMon-Version'), r.status);
@@ -2159,7 +2159,7 @@
       try {
         const r = await fetch('/api/chat', {
           method: 'POST', credentials: 'same-origin', signal: S.chatAbort.signal,
-          headers: { 'X-Requested-With': 'vpmon', 'Content-Type': 'application/json' },
+          headers: { 'X-Requested-With': 'vpmon', 'X-VPMon-Lang': LANG, 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: history }),
         });
         if (r.status === 401) { showLogin(); return; }
@@ -3980,7 +3980,7 @@
       try {
         const r = await fetch('/api/ssh/ai', {
           method: 'POST', credentials: 'same-origin', signal: sh.abort.signal,
-          headers: { 'X-Requested-With': 'vpmon', 'Content-Type': 'application/json' },
+          headers: { 'X-Requested-With': 'vpmon', 'X-VPMon-Lang': LANG, 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: history, explain }),
         });
         if (r.status === 401) { showLogin(); return; }

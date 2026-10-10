@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/edvitor13/vpserver-monitoring/internal/ai"
+	"github.com/edvitor13/vpserver-monitoring/internal/i18n"
 )
 
 const (
@@ -148,7 +149,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	start := time.Now()
-	usage, err := ai.Converse(ctx, cli, s.mon.AIContext(), history, s.mon.AI(), func(e ai.Event) { send(e.Type, e) })
+	lang := reqLang(r)
+	usage, err := ai.Converse(ctx, cli, s.mon.AIContext()+aiLangNote(lang), history, s.mon.AI(), func(e ai.Event) {
+		e.Label = i18n.Tr(lang, e.Label) // "Histórico do servidor · CPU · 24 h": o rótulo da consulta vai para a tela
+		send(e.Type, e)
+	})
 	if err != nil {
 		msg := "A IA não conseguiu responder. Tente de novo."
 		var ae *ai.Error
@@ -161,7 +166,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 			return // o navegador desistiu
 		}
 		slog.Warn("chat falhou", "err", err)
-		send("error", map[string]string{"message": msg})
+		send("error", map[string]string{"message": i18n.Tr(lang, msg)})
 		return
 	}
 	slog.Info("chat", "segundos", int(time.Since(start).Seconds()), "tokens_entrada", usage.PromptTokens,

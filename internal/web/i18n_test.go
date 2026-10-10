@@ -326,3 +326,39 @@ func TestAccountLanguage(t *testing.T) {
 		t.Fatalf("sem login: %d", rec.Code)
 	}
 }
+
+func TestServerTextFollowsLanguage(t *testing.T) {
+	a := NewAuth("chefe", "senha-muito-boa", "s", true, t.TempDir(), false)
+	h := New(nil, a, true, ai.Config{}, "", nil, nil).Handler()
+	call := func(lang string) map[string]any {
+		req := httptest.NewRequest("POST", "/api/password", strings.NewReader(`não é json`))
+		req.Header.Set("X-Requested-With", "vpmon")
+		if lang != "" {
+			req.Header.Set("X-VPMon-Lang", lang)
+		}
+		req.AddCookie(sessionCookie(a, "chefe"))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var j map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &j)
+		return j["error"].(map[string]any)
+	}
+	if e := call(""); e["message"] != "Dados inválidos." || e["code"] != "bad_request" {
+		t.Fatalf("sem idioma, português: %v", e)
+	}
+	if e := call("en"); e["message"] != "Invalid data." || e["code"] != "bad_request" {
+		t.Fatalf("em inglês, a mensagem traduzida e o code igual: %v", e)
+	}
+	if e := call("fr"); e["message"] != "Dados inválidos." {
+		t.Fatalf("idioma desconhecido fica em português: %v", e)
+	}
+	// dado do usuário não muda (o nome volta como está)
+	req := httptest.NewRequest("GET", "/api/me", nil)
+	req.Header.Set("X-VPMon-Lang", "en")
+	req.AddCookie(sessionCookie(a, "chefe"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), `"user":"chefe"`) {
+		t.Fatalf("me: %s", rec.Body.String())
+	}
+}

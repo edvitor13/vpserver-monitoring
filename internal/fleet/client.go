@@ -413,6 +413,13 @@ func (c *Client) setListening(on bool) {
 	c.mu.Unlock()
 }
 
+// refusal é o corpo de erro que volta para o central, no formato da API (a
+// mensagem passa pela tradução de lá, como as outras).
+func refusal(code, msg string) []byte {
+	b, _ := json.Marshal(map[string]any{"error": map[string]string{"code": code, "message": msg}})
+	return b
+}
+
 // answer executa uma leitura aqui e devolve ao central.
 func (c *Client) answer(ctx context.Context, r ViewRequest) {
 	c.mu.Lock()
@@ -422,7 +429,7 @@ func (c *Client) answer(ctx context.Context, r ViewRequest) {
 		return
 	}
 	rep := ViewReply{ID: r.ID, Status: 403, Type: "application/json",
-		Body: []byte(`{"error":{"code":"not_shared","message":"Este servidor não compartilhou isso com o painel central."}}`)}
+		Body: refusal("not_shared", "Este servidor não compartilhou isso com o painel central.")}
 	sh := cfg.share()
 	if !sh.Control { // as permissões de quem pediu só valem com o controle total
 		r.Actor.Actions, r.Actor.Clean = false, false
@@ -431,7 +438,7 @@ func (c *Client) answer(ctx context.Context, r ViewRequest) {
 		rep.Status, rep.Type, rep.Body = c.local(r)
 	}
 	if len(rep.Body) > MaxReply {
-		rep.Status, rep.Body = 502, []byte(`{"error":{"code":"too_big","message":"Resposta grande demais para mandar pelo painel central."}}`)
+		rep.Status, rep.Body = 502, refusal("too_big", "Resposta grande demais para mandar pelo painel central.")
 	}
 	rc, cancel := context.WithTimeout(ctx, httpTimeout)
 	defer cancel()
