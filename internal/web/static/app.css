@@ -772,3 +772,7 @@ a.btn { text-decoration: none; color: inherit; }
 .eye:hover, .eye:focus-visible, .eye[aria-pressed="true"] { color: var(--text); background: var(--surface-2); outline: none; }
 .secret-out { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; flex: 1; }
 .secret-out code { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.bk-usage .card-h { margin-bottom: 6px; }
+.bk-usage-n { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.bk-usage-n b { font-size: 1.6rem; }
+.bk-usage-sub { margin-top: 8px; font-size: .8rem; }

@@ -2886,6 +2886,7 @@
       const b = S.bk, st = b.storage;
       const step = (ok, n, t) => `<li class="${ok ? 'done' : ''}">${icon(ok ? 'ok' : 'info')}<span><b>${n}.</b> ${t}</span></li>`;
       body.innerHTML = `
+        ${backupsView.usageHTML()}
         ${!b.configured ? `<section class="card"><div class="card-h"><h2>${icon('info')}Para começar</h2></div><ol class="bk-steps">
           ${step(st.hasSecret, 1, 'Armazenamento: o bucket e as chaves de acesso (o painel testa antes de salvar).')}
           ${step(!!b.publicKey, 2, 'Chave de criptografia: gere aqui (a privada fica com você) ou cole uma pública.')}
@@ -2905,6 +2906,19 @@
           usando o usuário e a senha que já estão nas variáveis do contêiner, cifra a saída na hora com a chave pública e só então grava num
           arquivo temporário e envia. O servidor nunca guarda a chave privada: nem ele nem o bucket conseguem abrir os backups.
           Para isso o proxy do Docker deixa o painel rodar <code>exec</code>, o que também permitiria, com o painel invadido, rodar comandos nos contêineres.</section>`;
+    },
+    // quanto o bucket ocupa (e, no R2, quanto dos 10 GB grátis)
+    usageHTML() {
+      const u = S.bk.usage || {}, lim = S.bk.freeLimit, st = S.bk.storage;
+      if (!st.hasSecret || !u.at) return '';
+      const p = lim ? (u.bytes / lim) * 100 : 0;
+      const pp = p > 0 && p < 0.1 ? '<0,1%' : pct(p);
+      return `<section class="card bk-usage"><div class="card-h"><h2>${icon('disk')}Bucket ${esc(st.bucket)}</h2>
+          ${lim ? badge(p >= 90 ? 'crit' : p >= 75 ? 'warn' : 'ok', `${pp} do grátis`) : ''}</div>
+        <div class="bk-usage-n"><b class="num">${bytes(u.bytes)}</b><span class="muted">${lim ? `de ${bytes(lim)} grátis do R2` : 'ocupados'}</span></div>
+        ${lim ? `<div class="meter thick"><i class="${level(p, 75, 90)}" style="width:${Math.max(p > 0 ? 0.5 : 0, Math.min(100, p)).toFixed(2)}%"></i></div>` : ''}
+        <div class="muted bk-usage-sub">${u.objects} arquivo(s) no bucket · medido ${ago(u.at)}${u.error ? ` · <span class="bk-err">não consegui medir: ${esc(u.error)}</span>` : ''}
+          ${lim ? '· a cota grátis é da conta inteira: outros buckets dela também contam' : ''}</div></section>`;
     },
     storageHTML(st) {
       return `<section class="card"><div class="card-h"><h2>${icon('upload')}Armazenamento</h2>${st.hasSecret ? badge('ok', 'testado') : badge('info', 'falta configurar')}</div>

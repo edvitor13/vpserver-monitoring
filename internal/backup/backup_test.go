@@ -410,3 +410,56 @@ func TestStorageTestDoesNotNeedSystemTemp(t *testing.T) {
 		t.Fatalf("sobrou arquivo de teste: %v", left)
 	}
 }
+
+func TestBucketUsage(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	e.st.objs["hourly/antigo-de-outro-sistema.dump.age"], e.st.mod["hourly/antigo-de-outro-sistema.dump.age"] = make([]byte, 1000), *e.now
+	r2 := storage() // endpoint do R2: limite grátis de 10 GB
+	if _, err := e.s.SaveStorage(ctx, r2, ""); err != nil {
+		t.Fatal(err)
+	}
+	v := e.s.View()
+	if v.Usage.At == 0 || v.Usage.Bytes != 1000 || v.Usage.Objects != 1 || v.FreeLimit != 10<<30 {
+		t.Fatalf("medido ao salvar (o bucket inteiro, inclusive o que não é do painel): %+v limite %d", v.Usage, v.FreeLimit)
+	}
+	e.s.GenerateKey()
+	e.s.SetTarget("loja/db", true, "1h", "")
+	e.s.enqueueDue()
+	e.s.step(ctx)
+	if v := e.s.View(); v.Usage.Objects != 2 || v.Usage.Bytes <= 1000 {
+		t.Fatalf("medido de novo depois do backup: %+v", v.Usage)
+	}
+
+	// medição periódica: só depois de uma hora
+	e.st.objs["x"], e.st.mod["x"] = make([]byte, 5), *e.now
+	e.s.measureIfStale(ctx)
+	if e.s.View().Usage.Objects != 2 {
+		t.Fatal("antes de uma hora não lista o bucket de novo")
+	}
+	*e.now = e.now.Add(61 * time.Minute)
+	e.s.measureIfStale(ctx)
+	if e.s.View().Usage.Objects != 3 {
+		t.Fatal("depois de uma hora mede de novo")
+	}
+
+	// alerta a partir de 90% do grátis
+	if a := e.s.Alerts(); len(a) != 0 {
+		t.Fatalf("longe do limite: %+v", a)
+	}
+	e.s.f.Usage.Bytes = 9*(1<<30) + 500<<20
+	if a := e.s.Alerts(); len(a) != 1 || a[0].Key != "backup.bucket" {
+		t.Fatalf("perto do limite: %+v", a)
+	}
+
+	// outro provedor: sem limite grátis conhecido
+	other := r2
+	other.Endpoint = "https://s3.us-east-1.amazonaws.com"
+	e.s.SaveStorage(ctx, other, "")
+	if v := e.s.View(); v.FreeLimit != 0 {
+		t.Fatalf("fora do R2 não há limite: %d", v.FreeLimit)
+	}
+	if a := e.s.Alerts(); len(a) != 0 {
+		t.Fatalf("sem limite, sem alerta: %+v", a)
+	}
+}
