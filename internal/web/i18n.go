@@ -21,9 +21,9 @@ func reqLang(r *http.Request) string {
 
 // noTranslate são chaves do JSON cujo valor é dado, nunca texto da tela:
 // linhas de log, saída e histórico de comandos do SSH, registro do SSH,
-// arquivos do bucket e os scripts de preparo.
+// arquivos do bucket, os scripts de preparo e o grupo dos tipos de aviso (código).
 var noTranslate = map[string]bool{"lines": true, "blocks": true, "history": true, "entries": true, "objects": true,
-	"setup": true, "revoke": true, "out": true, "cmd": true}
+	"setup": true, "revoke": true, "out": true, "cmd": true, "group": true}
 
 // translate traduz as respostas JSON da API para o idioma do pedido. Streams
 // (SSE da IA), downloads e o que não é JSON passam direto.
@@ -86,12 +86,4 @@ func (t *trWriter) finish() {
 	t.Header().Del("Content-Length")
 	t.ResponseWriter.WriteHeader(t.status)
 	t.ResponseWriter.Write(out)
-}
-
-// aiLangNote vai no fim do prompt da IA quando a tela não está em português.
-func aiLangNote(lang string) string {
-	if lang == "en" {
-		return "\n\nIMPORTANT: the person is using the panel in English. Answer in English."
-	}
-	return ""
 }

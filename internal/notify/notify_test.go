@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -30,7 +31,9 @@ func (f *fakeSrc) set(alerts []monitor.Alert, apps ...monitor.AppView) {
 	f.o.Alerts = alerts
 	f.o.Apps = apps
 }
-func (f *fakeSrc) Summary(kind string, now time.Time) string { return "📊 resumo " + kind }
+func (f *fakeSrc) Summary(kind string, now time.Time, lang string) string {
+	return "📊 resumo " + kind
+}
 func (f *fakeSrc) PeriodOf(kind string, now time.Time) monitor.Period {
 	d := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	return monitor.Period{Kind: kind, From: d.AddDate(0, 0, -1), To: d, Label: "ontem"}
@@ -442,5 +445,103 @@ func TestPanelLinkFollowsPublicAddress(t *testing.T) {
 	got, err := s.SaveConfig(c)
 	if err != nil || got.PanelURL != "https://xyz.trycloudflare.com" {
 		t.Fatalf("endereço local não substitui o público: %v %v", got.PanelURL, err)
+	}
+}
+
+// --- idioma ------------------------------------------------------------------------------------
+
+// ptLeft acha português que sobrou numa mensagem que devia estar em inglês.
+var ptLeft = regexp.MustCompile(`(?i)[à-ÿ]|\b(de|do|da|em|está|com|para|pelo|durou|piorou|continua|urgente|alerta|alertas|aviso|resolvido|nova|aplicação|senha|painel|servidor|tentativas|errada|contêiner|teste)\b`)
+
+// Com o idioma das mensagens em inglês, o que sai pelo WhatsApp (e fica no
+// registro) é inglês: alertas, piora, resolvido, app nova, segurança e teste.
+func TestMessagesFollowLanguage(t *testing.T) {
+	s, src, wa, c := setup(t, "2026-10-06 14:00")
+	ctx := context.Background()
+	s.cfg.Lang, s.cfg.PanelURL = "en", "https://painel.exemplo.com"
+	s.cfg.Events["deploys"] = true
+	unhealthy := monitor.Alert{Key: "app.unhealthy:loja-api-1", Level: "crit", Area: "app", Title: "loja-api-1 está unhealthy",
+		Detail: "O healthcheck do contêiner está falhando. Veja os logs."}
+	disk := monitor.Alert{Key: "host.disk", Level: "warn", Title: "Disco 82% cheio"}
+	old := monitor.AppView{Key: "old", Name: "Old", Kind: "compose"}
+	var sent []string
+
+	src.set([]monitor.Alert{unhealthy}, old)
+	s.Tick(ctx)
+	c.add(2 * time.Minute)
+	s.Tick(ctx)
+	sent = append(sent, wa.take()...) // um alerta
+	src.set([]monitor.Alert{unhealthy, disk}, old)
+	c.add(time.Minute)
+	s.Tick(ctx)
+	c.add(2 * time.Minute)
+	s.Tick(ctx)
+	disk.Level, disk.Title = "crit", "Disco 93% cheio"
+	src.set([]monitor.Alert{unhealthy, disk}, old)
+	c.add(time.Minute)
+	s.Tick(ctx)
+	sent = append(sent, wa.take()...) // disco e a piora
+	app := monitor.AppView{Key: "loja", Name: "Loja", Kind: "compose", Units: []monitor.UnitView{
+		{Container: &docker.Container{Name: "loja-api", State: "running", Service: "api", ImageID: "sha:1"}}}}
+	src.set(nil, old, app) // resolveu tudo e chegou uma app
+	c.add(6 * time.Minute)
+	s.Tick(ctx)
+	c.add(6 * time.Minute) // a app nova sai depois de 5 min
+	s.Tick(ctx)
+	app.Units[0].Container = &docker.Container{Name: "loja-api", State: "running", Service: "api", ImageID: "sha:2"}
+	src.set(nil, old, app)
+	c.add(time.Minute)
+	s.Tick(ctx)
+	sent = append(sent, wa.take()...)
+	s.Security("password", "203.0.113.7", "ana")
+	for i := 0; i < 7; i++ {
+		s.Security("login_fail", "203.0.113.8", "")
+	}
+	time.Sleep(150 * time.Millisecond)
+	if _, err := s.SendNow(ctx, "test"); err != nil {
+		t.Fatal(err)
+	}
+	sent = append(sent, wa.take()...)
+
+	all := strings.Join(sent, "\n---\n")
+	if len(sent) < 7 {
+		t.Fatalf("esperava pelo menos 7 mensagens, saíram %d:\n%s", len(sent), all)
+	}
+	for _, m := range sent {
+		for _, ln := range strings.Split(m, "\n") {
+			if strings.Contains(ln, "https://") {
+				continue
+			}
+			if w := ptLeft.FindString(ln); w != "" {
+				t.Errorf("sobrou português (%q) na linha %q de:\n%s", w, ln, m)
+			}
+		}
+	}
+	for _, want := range []string{"🔴 *Urgent · srv*\n*loja-api-1 is unhealthy*", "The container's healthcheck is failing.",
+		"*Disk 93% full* _(got worse)_", "*2 alerts resolved · srv*", "• Disk 93% full _(lasted 9 min)_",
+		"*Loja* showed up on the server", "🚀 *Loja updated · srv*", "*Panel security*", "*VPServer test · srv*"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("faltou %q em:\n%s", want, all)
+		}
+	}
+	if log := s.View(ctx).Log; len(log) == 0 || strings.Contains(log[len(log)-1].Text, "Teste do VPServer") {
+		t.Fatalf("o registro guarda o que saiu (em inglês): %+v", log)
+	}
+}
+
+func TestSaveConfigLanguage(t *testing.T) {
+	s, _, _, _ := setup(t, "2026-10-06 14:00")
+	c := defaultConfig()
+	c.Lang = "en"
+	if got, err := s.SaveConfig(c); err != nil || got.Lang != "en" {
+		t.Fatalf("idioma: %+v %v", got.Lang, err)
+	}
+	c.Lang = ""
+	if got, _ := s.SaveConfig(c); got.Lang != "en" {
+		t.Fatalf("sem o campo (tela antiga), mantém o idioma: %q", got.Lang)
+	}
+	c.Lang = "fr"
+	if _, err := s.SaveConfig(c); err == nil {
+		t.Fatal("idioma desconhecido deveria falhar")
 	}
 }

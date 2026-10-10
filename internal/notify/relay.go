@@ -59,7 +59,7 @@ func (s *Service) Relay(ctx context.Context, from, text string) error {
 	if r := []rune(text); len(r) > maxRelayText {
 		text = string(r[:maxRelayText]) + "…"
 	}
-	text += "\n\n📡 _Servidor conectado: " + from + "_"
+	text += s.out("\n\n📡 _Servidor conectado: " + from + "_") // no idioma daqui (o texto vem no de lá)
 	now := s.now()
 	s.mu.Lock()
 	if !(s.cfg.Enabled && s.wa.Configured() && s.status.Connected() && len(s.cfg.Recipients) > 0) {

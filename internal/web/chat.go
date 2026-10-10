@@ -150,7 +150,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	lang := reqLang(r)
-	usage, err := ai.Converse(ctx, cli, s.mon.AIContext()+aiLangNote(lang), history, s.mon.AI(), func(e ai.Event) {
+	usage, err := ai.Converse(ctx, cli, s.mon.AIContext()+i18n.AINote(lang), history, s.mon.AI(), func(e ai.Event) {
 		e.Label = i18n.Tr(lang, e.Label) // "Histórico do servidor · CPU · 24 h": o rótulo da consulta vai para a tela
 		send(e.Type, e)
 	})

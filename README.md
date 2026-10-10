@@ -312,9 +312,16 @@ novo se piorar (alerta → urgente) e, se quiser, quando resolve. Urgente que co
 **Horários:** os resumos e análises saem no horário escolhido (padrão 08:00, no fuso
 `VPMON_TZ`). No **horário de silêncio** (padrão 22:00–07:00) só o urgente sai na hora; o
 resto chega numa mensagem só quando o silêncio acaba. **Limite:** no máximo 30 mensagens
-por hora por padrão (Notificações → Horários e limite, de 5 a 500). Vale para tudo que sai
-por este WhatsApp, inclusive os avisos dos servidores conectados; muito acima de 30 aumenta
+por hora por padrão (Notificações → Horários, limite e idioma, de 5 a 500). Vale para tudo que
+sai por este WhatsApp, inclusive os avisos dos servidores conectados; muito acima de 30 aumenta
 o risco de o WhatsApp bloquear o número.
+
+**Idioma das mensagens:** português ou inglês, no mesmo cartão. Na primeira vez que alguém
+configura as notificações, vale o idioma da tela dessa pessoa; depois, só muda quando alguém
+escolhe outro. Vale para tudo que sai pelo WhatsApp (alertas, resumos, segurança, teste) e
+para as análises da IA; as datas seguem o idioma (05/10 ou 10/05). Num servidor conectado que
+usa o WhatsApp do central, o aviso sai no idioma escolhido nele, e só o "Servidor conectado"
+do fim segue o do central.
 
 **Se o WhatsApp cair**, nada se perde: os alertas ficam esperando e saem quando
 reconectar, e a aba Infos avisa que as notificações estão paradas. O botão **Enviar
@@ -685,9 +692,9 @@ Números, datas e o eixo dos gráficos acompanham o idioma (1.234,5 e 31/12 em p
 
 O que vem pronto do servidor também acompanha a tela: mensagens de erro, alertas, Infos, os
 itens de Limites, o catálogo de Notificações e os nomes que o painel dá (como "Kernel e outros").
-A IA (aba IA e chat do SSH) responde no idioma da tela. Os avisos que saem pelo **WhatsApp**
-ainda são em português (próxima versão). Logs, saída de comandos e nomes de arquivos nunca são
-traduzidos.
+A IA (aba IA e chat do SSH) responde no idioma da tela. Os avisos do **WhatsApp** têm idioma
+próprio, escolhido em Notificações (veja acima). Logs, saída de comandos e nomes de arquivos
+nunca são traduzidos.
 
 **Texto novo ou outro idioma:** o texto da tela fica no `app.js` em português, sempre dentro
 de `T('…')`, com os valores como `{0}`, `{1}` (o idioma muda a ordem se precisar):
@@ -712,6 +719,15 @@ português. O `go test ./internal/i18n/` lê o código Go e falha se um texto de
 ficar sem tradução ou se sobrar tradução; `VPMON_I18N_DUMP=faltando.json go test -run
 TestServerTextsHaveEnglish ./internal/i18n/` grava o que falta. Valores que a tela usa como
 código (área, nível, chave do alerta) ficam de fora de propósito.
+
+**Mensagens do WhatsApp** também são escritas em português e traduzidas no envio, só que
+**linha por linha** (`i18n.Message`): a mensagem junta pedaços (cabeçalho, título do alerta,
+detalhe, link), então cada linha é procurada no catálogo, primeiro inteira, depois sem o
+enfeite da frente (emoji, `• `) e por fim sem o `*negrito*`/`_itálico_` das pontas. Cada linha
+dos textos e formatos de várias linhas do catálogo também vale sozinha (o teste reclama se a
+mesma linha tiver duas traduções). Ao escrever uma mensagem nova, monte cada linha com um
+formato que tenha texto fixo (`"*%s* _(piorou)_"`, não `"*%s*%s"` com a nota solta) e use
+`i18n.DayMonth`/`i18n.Weekday` para datas.
 
 Para outro idioma: um `i18n/<código>.js` (tela) e o catálogo do servidor no mesmo formato, o
 código em `LANGS` (`app.js`) e em `Langs` (`internal/web/users.go`), o `<script>` no

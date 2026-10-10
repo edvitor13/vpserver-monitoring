@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Default é o idioma do código (e de quem não diz o idioma, como um curl).
@@ -71,17 +72,102 @@ func load() {
 }
 
 func build(f File) *catalog {
-	c := &catalog{exact: f.Exact}
-	if c.exact == nil {
-		c.exact = map[string]string{}
+	c := &catalog{exact: map[string]string{}}
+	for pt, en := range f.Exact {
+		c.exact[pt] = en
 	}
 	for pt, en := range f.Formats {
 		if p, ok := compile(pt, en); ok {
 			c.pats = append(c.pats, p)
 		}
 	}
+	// cada linha dos textos de várias linhas também vale sozinha: as mensagens
+	// do WhatsApp juntam pedaços e são traduzidas linha por linha (Message)
+	ex, fm, _ := lines(f)
+	for pt, en := range ex {
+		if _, ok := c.exact[pt]; !ok {
+			c.exact[pt] = en
+		}
+	}
+	for pt, en := range fm {
+		if _, ok := f.Formats[pt]; ok {
+			continue
+		}
+		if p, ok := compile(pt, en); ok {
+			c.pats = append(c.pats, p)
+		}
+	}
 	sort.SliceStable(c.pats, func(i, j int) bool { return c.pats[i].score > c.pats[j].score })
 	return c
+}
+
+// lines tira, dos textos e formatos de várias linhas, um texto ou formato por
+// linha, quando a tradução tem as mesmas linhas e os mesmos valores em cada
+// uma (formato com %[n] fica de fora: o índice é do texto inteiro). conflicts
+// são linhas que aparecem com duas traduções diferentes (o teste reclama).
+func lines(f File) (exact, formats map[string]string, conflicts []string) {
+	exact, formats = map[string]string{}, map[string]string{}
+	add := func(dst map[string]string, pt, en string) {
+		if strings.TrimSpace(pt) == "" {
+			return
+		}
+		if old, ok := dst[pt]; ok && old != en {
+			conflicts = append(conflicts, pt)
+			return
+		}
+		dst[pt] = en
+	}
+	for _, pt := range sortedKeys(f.Exact) {
+		p, e := strings.Split(pt, "\n"), strings.Split(f.Exact[pt], "\n")
+		if len(p) < 2 || len(p) != len(e) {
+			continue
+		}
+		for i := range p {
+			add(exact, p[i], e[i])
+		}
+	}
+next:
+	for _, pt := range sortedKeys(f.Formats) {
+		en := f.Formats[pt]
+		p, e := strings.Split(pt, "\n"), strings.Split(en, "\n")
+		if len(p) < 2 || len(p) != len(e) || strings.Contains(en, "%[") {
+			continue
+		}
+		for i := range p {
+			if countVerbs(p[i]) != countVerbs(e[i]) {
+				continue next // a tradução passou valor de uma linha para outra
+			}
+		}
+		for i := range p {
+			if countVerbs(p[i]) == 0 {
+				add(exact, strings.ReplaceAll(p[i], "%%", "%"), strings.ReplaceAll(e[i], "%%", "%"))
+			} else {
+				add(formats, p[i], e[i])
+			}
+		}
+	}
+	sort.Strings(conflicts)
+	return exact, formats, conflicts
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// countVerbs conta os valores de um formato (o %% não conta).
+func countVerbs(s string) int {
+	n := 0
+	for _, v := range verb.FindAllString(s, -1) {
+		if v != "%%" {
+			n++
+		}
+	}
+	return n
 }
 
 // compile transforma o formato em português numa regex com um grupo por valor.
@@ -194,6 +280,67 @@ func (c *catalog) tr(s string, depth int) string {
 	return s
 }
 
+// Message traduz uma mensagem de várias linhas (WhatsApp), montada em pedaços:
+// linha por linha; a linha que não for conhecida é tentada sem o enfeite da
+// frente (emoji, "• ") e depois também sem o *negrito*/_itálico_ das pontas.
+// O que não tem tradução (nomes, links, o texto da IA) fica como está.
+func Message(lang, text string) string {
+	c := get(lang)
+	if c == nil || text == "" {
+		return text
+	}
+	if v, ok := c.exact[text]; ok {
+		return v
+	}
+	ls := strings.Split(text, "\n")
+	for i, l := range ls {
+		ls[i] = c.line(l)
+	}
+	return strings.Join(ls, "\n")
+}
+
+func decor(r rune) bool {
+	return unicode.IsSpace(r) || r == '•' || r == '‍' || r == '️' || unicode.Is(unicode.So, r) || unicode.Is(unicode.Sk, r)
+}
+
+func markup(r rune) bool { return r == '*' || r == '_' || r == '~' }
+
+func (c *catalog) line(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return s
+	}
+	if t := c.tr(s, 0); t != s {
+		return t
+	}
+	if i := strings.IndexFunc(s, func(r rune) bool { return !decor(r) }); i > 0 {
+		if t := c.tr(s[i:], 0); t != s[i:] {
+			return s[:i] + t
+		}
+	}
+	i := strings.IndexFunc(s, func(r rune) bool { return !decor(r) && !markup(r) })
+	j := strings.LastIndexFunc(s, func(r rune) bool { return !markup(r) && !unicode.IsSpace(r) })
+	if i < 0 || j < i {
+		return s
+	}
+	_, n := utf8.DecodeRuneInString(s[j:])
+	j += n
+	if core := s[i:j]; core != s {
+		if t := c.tr(core, 0); t != core {
+			return s[:i] + t + s[j:]
+		}
+	}
+	return s
+}
+
+// AINote vai no fim do prompt da IA quando a resposta não é em português (a
+// tela ou as mensagens do WhatsApp em outro idioma).
+func AINote(lang string) string {
+	if lang == "en" {
+		return "\n\nIMPORTANT: the person uses the panel in English. Answer in English."
+	}
+	return ""
+}
+
 // número em português (1.234,5) dentro de um valor vira o do inglês (1,234.5)
 var ptNum = regexp.MustCompile(`\b(\d{1,3}(?:\.\d{3})+|\d+),(\d+)\b`)
 
@@ -247,6 +394,9 @@ func (c *catalog) walk(v any, skip map[string]bool) any {
 
 // Has diz se o idioma tem catálogo (o padrão não precisa).
 func Has(lang string) bool { return get(lang) != nil }
+
+// Valid diz se o idioma existe (o padrão ou um com catálogo).
+func Valid(lang string) bool { return lang == Default || Has(lang) }
 
 // Use troca o catálogo de um idioma (testes).
 func Use(lang string, f File) {

@@ -40,6 +40,9 @@ func (s *Server) notifyConfig(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_request", "Dados inválidos.")
 		return
 	}
+	if c.Lang == "" && s.nt.Lang() == "" {
+		c.Lang = reqLang(r) // padrão: o idioma de quem configurou
+	}
 	saved, err := s.nt.SaveConfig(c)
 	if err != nil {
 		apiError(w, http.StatusBadRequest, "bad_config", err.Error())

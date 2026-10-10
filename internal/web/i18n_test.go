@@ -1,19 +1,21 @@
 package web
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 
+	"encoding/json"
 	"github.com/edvitor13/vpserver-monitoring/internal/ai"
+	"github.com/edvitor13/vpserver-monitoring/internal/notify"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 )
 
 // Idiomas da tela: o texto fica em português no app.js, dentro de T('…'), e cada
@@ -360,5 +362,41 @@ func TestServerTextFollowsLanguage(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if !strings.Contains(rec.Body.String(), `"user":"chefe"`) {
 		t.Fatalf("me: %s", rec.Body.String())
+	}
+}
+
+// O idioma das mensagens do WhatsApp: na primeira vez, o de quem configurou
+// (o da tela); depois, só muda quando a pessoa escolhe outro.
+func TestNotifyLanguageDefault(t *testing.T) {
+	a := NewAuth("chefe", "senha-muito-boa", "s", true, t.TempDir(), false)
+	nt := notify.New(srcStub{"srv"}, &waStub{installed: true}, time.UTC, t.TempDir(), "self")
+	h := New(nil, a, true, ai.Config{}, "", nt, nil).Handler()
+	save := func(screen, lang string) string {
+		body := `{"enabled":true,"recipients":[],"events":{},"dailyAt":"08:00","quiet":true,"quietFrom":"22:00","quietTo":"07:00","lang":"` + lang + `"}`
+		req := httptest.NewRequest("POST", "/api/notify/config", strings.NewReader(body))
+		req.Header.Set("X-Requested-With", "vpmon")
+		if screen != "" {
+			req.Header.Set("X-VPMon-Lang", screen)
+		}
+		req.AddCookie(sessionCookie(a, "chefe"))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var j struct {
+			Config notify.Config `json:"config"`
+		}
+		json.Unmarshal(rec.Body.Bytes(), &j)
+		if rec.Code != 200 {
+			t.Fatalf("%d %s", rec.Code, rec.Body.String())
+		}
+		return j.Config.Lang
+	}
+	if got := save("en", ""); got != "en" {
+		t.Fatalf("primeira vez: o idioma da tela, veio %q", got)
+	}
+	if got := save("", ""); got != "en" {
+		t.Fatalf("outra tela sem o campo mantém: %q", got)
+	}
+	if got := save("en", "pt-BR"); got != "pt-BR" {
+		t.Fatalf("escolha da pessoa vale: %q", got)
 	}
 }

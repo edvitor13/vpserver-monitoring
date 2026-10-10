@@ -2409,15 +2409,16 @@
               <button class="btn" type="button" data-act="settings" data-v="ia">${T('Configurar a IA')}</button></div>` : ''}
             <div class="opts">${kinds(g).map(opt).join('')}</div></div>`).join('')}
         </section>
-        <section class="card"><div class="card-h"><h2>${icon('clock')}${T('Horários e limite')}</h2></div>
+        <section class="card"><div class="card-h"><h2>${icon('clock')}${T('Horários, limite e idioma')}</h2></div>
           <div class="nt-times">
             <div class="field"><label for="nt-daily">${T('Resumos e análises saem às')}</label><input class="input" type="time" id="nt-daily" value="${esc(c.dailyAt)}"></div>
             <div class="field"><label for="nt-max">${T('Máximo de mensagens por hora')}</label><input class="input nt-max" type="number" id="nt-max" min="5" max="500" value="${c.maxPerHour || 30}"></div>
+            <div class="field"><label for="nt-lang">${T('Idioma das mensagens')}</label><select class="input" id="nt-lang">${Object.entries(LANGS).map(([k, l]) => `<option value="${k}"${k === (c.lang || 'pt-BR') ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
             <div class="nt-quiet"><label class="sw-l"><input class="sw" type="checkbox" id="nt-quiet" ${c.quiet ? 'checked' : ''}><span>${T('Horário de silêncio')}</span></label>
               <div class="nt-range"><div class="field"><label for="nt-qf">${T('das')}</label><input class="input" type="time" id="nt-qf" value="${esc(c.quietFrom)}" ${c.quiet ? '' : 'disabled'}></div>
               <div class="field"><label for="nt-qt">${T('às')}</label><input class="input" type="time" id="nt-qt" value="${esc(c.quietTo)}" ${c.quiet ? '' : 'disabled'}></div></div></div>
           </div>
-          <p class="muted" style="margin:10px 0 0;font-size:.8rem">${T('No silêncio, só o urgente (app caiu, servidor no limite, segurança) sai na hora; o resto chega numa mensagem só quando o silêncio acaba. Fuso do painel: {0} (<code>VPMON_TZ</code>).{1} O máximo por hora (padrão 30) vale para tudo que sai por este WhatsApp, inclusive os avisos dos servidores conectados; muito acima disso aumenta o risco de o WhatsApp bloquear o número.', [esc(n.tz), n.held ? ` ${T('Agora há {0} mensagem(ns) segurada(s).', [n.held])}` : ''])}</p>
+          <p class="muted" style="margin:10px 0 0;font-size:.8rem">${T('No silêncio, só o urgente (app caiu, servidor no limite, segurança) sai na hora; o resto chega numa mensagem só quando o silêncio acaba. Fuso do painel: {0} (<code>VPMON_TZ</code>).{1} O máximo por hora (padrão 30) vale para tudo que sai por este WhatsApp, inclusive os avisos dos servidores conectados; muito acima disso aumenta o risco de o WhatsApp bloquear o número. O idioma vale para todas as mensagens, inclusive as análises da IA.', [esc(n.tz), n.held ? ` ${T('Agora há {0} mensagem(ns) segurada(s).', [n.held])}` : ''])}</p>
         </section>
         <section class="card"><div class="card-h"><h2>${icon('send')}${T('Enviar agora')}</h2></div>
           <div class="controls">
@@ -2472,6 +2473,7 @@
         if (t.dataset.ev) { S.nt.config.events[t.dataset.ev] = t.checked; notifyView.save(); return; }
         if (t.id === 'nt-on') { S.nt.config.enabled = t.checked; t.nextElementSibling.textContent = t.checked ? T('Ligadas') : T('Desligadas'); notifyView.save(); return; }
         if (t.id === 'nt-quiet') { S.nt.config.quiet = t.checked; $('#nt-qf').disabled = $('#nt-qt').disabled = !t.checked; notifyView.save(); return; }
+        if (t.id === 'nt-lang') { S.nt.config.lang = t.value; notifyView.save(); return; }
         if (t.id === 'nt-max') {
           const v = +t.value;
           if (v >= 5 && v <= 500) { S.nt.config.maxPerHour = v; notifyView.save(); } else { toast(T('Use de 5 a 500 mensagens por hora.')); t.value = S.nt.config.maxPerHour || 30; }
