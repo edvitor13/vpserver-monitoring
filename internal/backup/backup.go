@@ -50,6 +50,8 @@ type Source interface {
 var everies = map[string]time.Duration{"1h": time.Hour, "6h": 6 * time.Hour, "24h": 24 * time.Hour}
 
 const (
+	usageEvery = time.Hour        // uso do bucket: no máximo uma listagem por hora (fora as dos backups)
+	r2Free     = int64(10) << 30  // cota grátis de armazenamento do R2: 10 GB-mês
 	retryAfter = 15 * time.Minute // depois de uma falha, tenta de novo em 15 min
 	dumpLimit  = 3 * time.Hour
 	maxRuns    = 60
@@ -98,7 +100,16 @@ type Run struct {
 	PruneErr string `json:"pruneErr,omitempty"`
 }
 
+// Usage é quanto o bucket ocupa (soma dos arquivos que o token enxerga).
+type Usage struct {
+	Bytes   int64  `json:"bytes"`
+	Objects int    `json:"objects"`
+	At      int64  `json:"at"` // quando mediu (unix); 0 = ainda não
+	Error   string `json:"error,omitempty"`
+}
+
 type fileData struct {
+	Usage     Usage              `json:"usage"`
 	Storage   s3.Config          `json:"storage"`
 	Prefix    string             `json:"prefix"`
 	PublicKey string             `json:"publicKey"`
@@ -177,6 +188,16 @@ type View struct {
 	Runs       []Run     `json:"runs"`
 	Running    string    `json:"running"`
 	Queue      []string  `json:"queue"`
+	Usage      Usage     `json:"usage"`
+	FreeLimit  int64     `json:"freeLimit"` // cota grátis do provedor (R2: 10 GB); 0 = sem
+}
+
+// freeLimit: o R2 tem 10 GB-mês grátis; outros provedores, sem limite conhecido.
+func freeLimit(endpoint string) int64 {
+	if strings.HasSuffix(strings.ToLower(strings.TrimRight(endpoint, "/")), ".r2.cloudflarestorage.com") {
+		return r2Free
+	}
+	return 0
 }
 
 // StorageV é o armazenamento sem o segredo.
@@ -219,6 +240,7 @@ func (s *Service) View() View {
 		Storage: StorageV{Endpoint: s.f.Storage.Endpoint, Region: s.f.Storage.Region, Bucket: s.f.Storage.Bucket,
 			AccessKey: s.f.Storage.AccessKey, HasSecret: s.f.Storage.SecretKey != ""}}
 	v.Configured = v.Storage.HasSecret && v.PublicKey != ""
+	v.Usage, v.FreeLimit = s.f.Usage, freeLimit(s.f.Storage.Endpoint)
 	seen := map[string]bool{}
 	for _, c := range cts {
 		eng := Detect(c.Image)
@@ -304,9 +326,10 @@ func (s *Service) SaveStorage(ctx context.Context, c s3.Config, prefix string) (
 	}
 	c.Endpoint = strings.TrimRight(strings.TrimSpace(c.Endpoint), "/")
 	c.AccessKey, c.SecretKey = strings.TrimSpace(c.AccessKey), strings.TrimSpace(c.SecretKey)
+	u := measure(ctx, st, s.now())
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.f.Storage, s.f.Prefix = c, prefix
+	s.f.Storage, s.f.Prefix, s.f.Usage = c, prefix, u
 	if err := s.saveLocked(); err != nil {
 		return StorageV{}, err
 	}
@@ -468,6 +491,7 @@ func (s *Service) Run(ctx context.Context) {
 		s.enqueueDue()
 		for s.step(ctx) {
 		}
+		s.measureIfStale(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -664,6 +688,10 @@ func (s *Service) backup(ctx context.Context, id, by string) {
 		if !ret.ByBucket {
 			run.Pruned, run.PruneErr = s.prune(uctx, st, fmt.Sprintf("%s/%s/%s/", prefix, slug(s.src.ServerName()), name), ret, start)
 		}
+		u := measure(uctx, st, s.now())
+		s.mu.Lock()
+		s.f.Usage = u
+		s.mu.Unlock()
 		return nil
 	}()
 	run.Seconds = int64(s.now().Sub(start).Seconds())
@@ -764,8 +792,47 @@ func (s *Service) Alerts() []monitor.Alert {
 				Title: "O último backup de " + id + " falhou", Detail: t.LastErr + " (tenta de novo em 15 min)."})
 		}
 	}
+	if lim := freeLimit(s.f.Storage.Endpoint); lim > 0 && s.f.Usage.Bytes*10 >= lim*9 {
+		out = append(out, monitor.Alert{Key: "backup.bucket", Level: "warn", Area: "monitor",
+			Title:  fmt.Sprintf("O bucket dos backups usa %s dos %s grátis do R2", human(s.f.Usage.Bytes), human(lim)),
+			Detail: "Passando dos 10 GB-mês, o R2 cobra o excedente. Diminua a retenção ou a frequência na aba Backups (ou confira os outros buckets da conta)."})
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
+}
+
+// measure soma o tamanho de tudo que o token enxerga no bucket.
+func measure(ctx context.Context, st Store, now time.Time) Usage {
+	objs, err := st.List(ctx, "", 1_000_000)
+	if err != nil {
+		return Usage{At: now.Unix(), Error: short(err.Error())}
+	}
+	u := Usage{At: now.Unix(), Objects: len(objs)}
+	for _, o := range objs {
+		u.Bytes += o.Size
+	}
+	return u
+}
+
+// measureIfStale mede o bucket se a última medição passou de uma hora.
+func (s *Service) measureIfStale(ctx context.Context) {
+	s.mu.Lock()
+	cfg, last := s.f.Storage, s.f.Usage.At
+	s.mu.Unlock()
+	if cfg.SecretKey == "" || s.now().Sub(time.Unix(last, 0)) < usageEvery {
+		return
+	}
+	st, err := s.open(cfg)
+	if err != nil {
+		return
+	}
+	mctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	u := measure(mctx, st, s.now())
+	s.mu.Lock()
+	s.f.Usage = u
+	s.saveLocked()
+	s.mu.Unlock()
 }
 
 // Objects lista os arquivos de um banco no bucket (mais novos primeiro).
