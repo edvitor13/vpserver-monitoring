@@ -299,7 +299,7 @@ func (s *Service) SaveStorage(ctx context.Context, c s3.Config, prefix string) (
 	if err != nil {
 		return StorageV{}, err
 	}
-	if err := testStore(ctx, st, prefix+"/"+slug(s.src.ServerName())+"/.vpserver-teste"); err != nil {
+	if err := testStore(ctx, st, s.tmp, prefix+"/"+slug(s.src.ServerName())+"/.vpserver-teste"); err != nil {
 		return StorageV{}, err
 	}
 	c.Endpoint = strings.TrimRight(strings.TrimSpace(c.Endpoint), "/")
@@ -313,8 +313,16 @@ func (s *Service) SaveStorage(ctx context.Context, c s3.Config, prefix string) (
 	return StorageV{Endpoint: c.Endpoint, Region: c.Region, Bucket: c.Bucket, AccessKey: c.AccessKey, HasSecret: true}, nil
 }
 
-func testStore(ctx context.Context, st Store, key string) error {
-	tmp, err := os.CreateTemp("", "vpserver-teste-*")
+// testStore usa a pasta temporária dos backups (em /data): no contêiner o
+// resto do sistema de arquivos, /tmp inclusive, é só leitura.
+func testStore(ctx context.Context, st Store, dir, key string) error {
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "vpserver-teste-*")
 	if err != nil {
 		return err
 	}
