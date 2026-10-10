@@ -110,6 +110,16 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 .tab:hover { color: var(--text); }
 .tab[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
 .tab .dot { width: 7px; height: 7px; border-radius: 50%; }
+.tab-group { font-family: inherit; }
+.tab-chev { display: inline-flex; margin-left: -2px; }
+.tab-chev svg.i { width: 14px; height: 14px; transition: transform .15s; }
+.tab-group[aria-expanded="true"] { color: var(--text); }
+.tab-group[aria-expanded="true"] .tab-chev svg.i { transform: rotate(180deg); }
+.nav-item { text-decoration: none; }
+.nav-item > svg.i { flex: none; width: 18px; height: 18px; color: var(--text-2); }
+.nav-item.on > svg.i:first-child { color: var(--accent); }
+.nav-item > svg.i:last-child:not(:first-child) { color: var(--accent); }
+.sheet-h { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 700; margin: 14px 2px 8px; }
 .count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 99px; font-size: .72rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .count.crit { background: var(--critical); color: #fff; }
 .count.warn { background: var(--warning); color: #1a1a19; }

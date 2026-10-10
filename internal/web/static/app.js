@@ -639,6 +639,39 @@
     ['system', 'Sistema', 'server', 'Sistema'], ['limits', 'Limites', 'load', 'Limites'],
     ['cleanup', 'Limpeza', 'broom', 'Limpeza'], ['backups', 'Backups', 'db', 'Backups'], ['ssh', 'SSH', 'shell', 'SSH'], ['users', 'Usuários', 'users', 'Usuários'],
     ['ai', 'IA', 'spark', 'IA'], ['notify', 'Notificações', 'bell', 'Avisos']]; // IA e WhatsApp juntas, no fim
+  // Menu de cima (computador): as seções do dia a dia soltas e o resto em grupos com menu
+  // suspenso. O "Mais" do celular usa os mesmos grupos. [chave, nome, ícone, seções]
+  const NAV = ['overview', 'infos', 'apps', 'logs',
+    ['res', 'Recursos', 'cpu', ['traffic', 'system', 'limits']],
+    ['ops', 'Manutenção', 'broom', ['cleanup', 'backups', 'ssh']],
+    'ai',
+    ['adm', 'Administração', 'gear', ['servers', 'users', 'notify']]];
+  const TAB_DESC = {
+    traffic: 'Tráfego por app e do mês', system: 'Processos, disco e Docker', limits: 'Cotas do plano grátis',
+    cleanup: 'Cache, imagens e logs do Docker', backups: 'Bancos para o R2 ou S3', ssh: 'Comandos no servidor, em chat',
+    servers: 'Outros painéis conectados', users: 'Quem entra e o que pode', notify: 'Avisos pelo WhatsApp',
+  };
+  // o menu com só o que esta pessoa vê: grupo vazio some, grupo de uma seção vira seção solta
+  function navItems() {
+    const vis = visibleTabs();
+    const byKey = new Map(vis.map((t) => [t[0], t]));
+    const used = new Set();
+    const out = [];
+    for (const n of NAV) {
+      if (typeof n === 'string') {
+        if (byKey.has(n)) { out.push({ tab: byKey.get(n) }); used.add(n); }
+        continue;
+      }
+      const [g, label, ic, keys] = n;
+      const items = keys.filter((k) => byKey.has(k)).map((k) => byKey.get(k));
+      items.forEach(([k]) => used.add(k));
+      if (items.length === 1) out.push({ tab: items[0] });
+      else if (items.length) out.push({ group: g, label, icon: ic, items });
+    }
+    vis.filter(([k]) => !used.has(k)).forEach((t) => out.push({ tab: t })); // seção nova fora do NAV: solta, no fim
+    return out;
+  }
+  const groupOf = (tab) => { const n = NAV.find((x) => typeof x !== 'string' && x[3].includes(tab)); return n ? n[0] : ''; };
   const BNAV = ['overview', 'apps', 'infos', 'ai']; // no celular, o resto fica em "Mais"
   // só as visíveis (em outro servidor não há IA): completa com Servidores/Banda
   const bnavTabs = () => {
@@ -682,7 +715,9 @@
             <button class="icon-btn" type="button" data-act="logout" aria-label="Sair" title="Sair">${icon('logout')}</button>
           </div>
         </div>
-        <nav class="tabs" aria-label="Seções">${visibleTabs().map(([k, l, ic]) => `<a class="tab" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}${l}${countHTML(k)}</a>`).join('')}</nav>
+        <nav class="tabs" aria-label="Seções">${navItems().map((n) => (n.tab
+          ? `<a class="tab" href="${tabHref(n.tab[0])}" data-tab="${n.tab[0]}">${icon(n.tab[2])}${n.tab[1]}${countHTML(n.tab[0])}</a>`
+          : `<button class="tab tab-group" type="button" data-act="nav-menu" data-group="${n.group}" aria-haspopup="menu" aria-expanded="false">${icon(n.icon)}${n.label}<span class="tab-chev">${icon('chev')}</span></button>`)).join('')}</nav>
       </div><div class="remote-strip" id="remote-strip" hidden></div></header>
       <main id="view"></main>
       <footer class="foot">${versionHTML()}</footer>
@@ -785,6 +820,39 @@
     S.drawer = { update() {}, reload() {}, destroy() {} };
     $('.srv-item.on', m)?.focus();
   }
+  // menu suspenso de um grupo do menu de cima (mesma camada do seletor de servidores)
+  function openNavMenu(btn) {
+    closeDrawer();
+    const n = navItems().find((x) => x.group === btn.dataset.group);
+    if (!n) return;
+    const rect = btn.getBoundingClientRect();
+    const scrim = document.createElement('div');
+    scrim.className = 'scrim-clear';
+    scrim.dataset.act = 'close';
+    const m = document.createElement('div');
+    m.className = 'srv-menu nav-menu';
+    m.setAttribute('role', 'menu');
+    m.setAttribute('aria-label', n.label);
+    m.dataset.group = n.group;
+    m.innerHTML = n.items.map(([k, l, ic]) => `<a class="srv-item nav-item${k === S.tab ? ' on' : ''}" role="menuitem" href="${tabHref(k)}" data-act="close">
+      ${icon(ic)}<span class="srv-item-t"><b>${esc(l)}</b><small>${esc(TAB_DESC[k] || '')}</small></span>${k === S.tab ? icon('ok') : ''}</a>`).join('');
+    document.body.append(scrim, m);
+    const w = Math.min(300, window.innerWidth - 24);
+    m.style.width = `${w}px`;
+    m.style.top = `${Math.round(rect.bottom + 4)}px`;
+    m.style.left = `${Math.round(Math.max(12, Math.min(rect.left, window.innerWidth - w - 12)))}px`;
+    btn.setAttribute('aria-expanded', 'true');
+    S.drawer = { update() {}, reload() {}, destroy() { btn.setAttribute('aria-expanded', 'false'); } };
+    const items = $$('.nav-item', m);
+    m.addEventListener('keydown', (e) => {
+      const i = items.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+      } else if (e.key === 'Tab') closeDrawer();
+    });
+    (items.find((a) => a.classList.contains('on')) || items[0]).focus();
+  }
   function isDark() {
     const t = document.documentElement.getAttribute('data-theme');
     return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
@@ -812,8 +880,22 @@
   }
   function markTabs() {
     $$('.tab, .bn[data-tab], .sheet-item[data-tab]').forEach((t) => t.setAttribute('aria-current', t.dataset.tab === S.tab ? 'page' : 'false'));
+    $$('.tab-group').forEach((b) => b.setAttribute('aria-current', b.dataset.group === groupOf(S.tab) ? 'page' : 'false'));
     const more = $('#bn-more');
     if (more) more.setAttribute('aria-current', bnavTabs().includes(S.tab) ? 'false' : 'page');
+  }
+  // seções do "Mais": as soltas que não estão no menu de baixo e, em seguida, os grupos
+  function moreSections() {
+    const bn = bnavTabs();
+    const cell = ([k, l, ic]) => `<a class="sheet-item" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${l}</span></a>`;
+    const loose = [];
+    const groups = [];
+    for (const n of navItems()) {
+      if (n.tab) { if (!bn.includes(n.tab[0])) loose.push(n.tab); continue; }
+      const items = n.items.filter(([k]) => !bn.includes(k));
+      if (items.length) groups.push(`<div class="sheet-h">${esc(n.label)}</div><div class="sheet-grid">${items.map(cell).join('')}</div>`);
+    }
+    return (loose.length ? `<div class="sheet-grid">${loose.map(cell).join('')}</div>` : '') + groups.join('');
   }
   // "Mais" no celular: as outras seções, Configurações, tema e sair
   function openMore() {
@@ -827,9 +909,8 @@
     sh.setAttribute('aria-modal', 'true');
     sh.setAttribute('aria-label', 'Mais seções');
     sh.innerHTML = `<div class="sheet-grip"></div>
-      <div class="sheet-who">${icon('user')}<span><b>${esc(S.me.user)}</b> · ${esc(roleText(S.me))}</span></div><div class="sheet-grid">
-      ${visibleTabs().filter(([k]) => !bnavTabs().includes(k)).map(([k, l, ic]) => `<a class="sheet-item" href="${tabHref(k)}" data-tab="${k}">${icon(ic)}<span>${l}</span></a>`).join('')}
-      </div><div class="sheet-sep"></div><div class="sheet-grid">
+      <div class="sheet-who">${icon('user')}<span><b>${esc(S.me.user)}</b> · ${esc(roleText(S.me))}</span></div>${moreSections()}
+      <div class="sheet-sep"></div><div class="sheet-grid">
       ${canInstall() ? `<button class="sheet-item install-only" type="button" data-act="install">${icon('install')}<span>Instalar app</span></button>` : ''}
       <button class="sheet-item" type="button" data-act="settings">${icon('gear')}<span>Configurações</span></button>
       <button class="sheet-item" type="button" data-act="theme">${icon(isDark() ? 'sun' : 'moon')}<span>${isDark() ? 'Tema claro' : 'Tema escuro'}</span></button>
@@ -4019,6 +4100,13 @@
       if (a === 'psort') { S.procSort = v; systemView.reload && systemView.reload(); return; }
       if (a === 'more') { openMore(); return; }
       if (a === 'servers-menu') { if ($('.srv-menu')) closeDrawer(); else openServersMenu(act); return; }
+      if (a === 'nav-menu') {
+        const open = $('.nav-menu');
+        const same = open && open.dataset.group === act.dataset.group;
+        closeDrawer();
+        if (!same) openNavMenu(act);
+        return;
+      }
       if (a === 'pick-server') { pickServer(v); return; }
       if (a === 'update') { location.reload(); return; }
       if (a === 'install') { closeDrawer(); closeInstallBar(); installApp(); return; }
