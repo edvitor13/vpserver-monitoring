@@ -44,6 +44,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # sem dependências externas (não há go.sum)
+      - name: OpenSSH (teste de ponta a ponta do SSH pela tela)
+        run: test -x /usr/sbin/sshd || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends openssh-server; }
       - name: Testes
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; echo "rode gofmt -w ."; exit 1; }
