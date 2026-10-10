@@ -50,7 +50,11 @@ mesma entrega quando são do mesmo assunto; assunto novo ganha issue própria.
 ## Convenções
 
 - **Código em inglês**; comentários, documentação e texto de tela em
-  **português (pt-BR)**.
+  **português (pt-BR)**. A tela também fala inglês: todo texto de tela vai
+  dentro de `T('…')` (português, valores como `{0}`), e a tradução entra em
+  `internal/web/static/i18n/en.js` **no mesmo commit** (o `go test` falha se
+  faltar, sobrar, perder `{0}`/tag ou se um texto com acento ficar fora do
+  `T()`). Não use `t` como nome da função: `t` já é variável em vários lugares.
 - **Go 1.23 só com a biblioteca padrão** (o `go.mod` não tem dependências).
   Front em **HTML/CSS/JS puros**, sem build, embutidos no binário
   (`internal/web/static`). Biblioteca de terceiros só embutida no repositório,

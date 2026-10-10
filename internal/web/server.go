@@ -110,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/logout", s.logout)
 	mux.HandleFunc("GET /api/me", s.private(s.me))
 	mux.HandleFunc("POST /api/password", s.private(s.changePassword))
+	mux.HandleFunc("POST /api/lang", s.private(s.setLang))
 	mux.HandleFunc("GET /api/overview", s.private(s.overview))
 	mux.HandleFunc("GET /api/history/host", s.private(s.hostHistory))
 	mux.HandleFunc("GET /api/history/apps", s.private(s.appsHistory))
@@ -217,7 +218,7 @@ func (s *Server) stampIndex() {
 		return
 	}
 	html := string(s.rawIndex)
-	for _, f := range []string{"app.js", "app.css", "theme.js", "uPlot.iife.min.js", "uPlot.min.css", "manifest.webmanifest"} {
+	for _, f := range []string{"app.js", "app.css", "theme.js", "uPlot.iife.min.js", "uPlot.min.css", "manifest.webmanifest", "i18n/en.js"} {
 		html = strings.ReplaceAll(html, `"`+f+`"`, `"`+f+"?v="+s.version+`"`)
 	}
 	meta := `<meta name="vpmon-version" content="` + s.version + `">`
@@ -456,7 +457,27 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	src, changed := s.auth.PasswordInfo(u)
 	writeJSON(w, http.StatusOK, map[string]any{"user": u.Name, "passwordSource": src,
 		"passwordChanged": changed, "mustChange": u.MustChange,
-		"admin": u.Admin, "actions": u.CanAct(), "manage": u.CanManage(), "clean": u.CanClean(), "twoFA": u.TwoFA()})
+		"admin": u.Admin, "actions": u.CanAct(), "manage": u.CanManage(), "clean": u.CanClean(), "twoFA": u.TwoFA(), "lang": u.Lang})
+}
+
+// setLang guarda o idioma da tela na conta de quem está logado.
+func (s *Server) setLang(w http.ResponseWriter, r *http.Request) {
+	if !sameOrigin(r) {
+		apiError(w, http.StatusForbidden, "bad_origin", "Requisição recusada.")
+		return
+	}
+	var body struct {
+		Lang string `json:"lang"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil || !Langs[body.Lang] {
+		apiError(w, http.StatusBadRequest, "bad_lang", "Idioma desconhecido.")
+		return
+	}
+	if err := s.auth.SetLang(userOf(r).Name, body.Lang); err != nil {
+		apiError(w, http.StatusInternalServerError, "store_failed", "Não consegui gravar.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "lang": body.Lang})
 }
 
 // changePassword troca a senha (e, se pedido, o usuário) pela tela. Confere a
