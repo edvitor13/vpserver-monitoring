@@ -678,13 +678,16 @@ tela" nas Notificações.
 
 A tela fala **português** e **inglês**. No primeiro acesso vale o idioma do navegador
 (português para quem usa português; inglês para o resto). Depois, a escolha fica em
-**Configurações** (no topo da janela) e na tela de login: vale naquele aparelho e, logado,
+**Configurações → Minha conta** e na tela de login: vale naquele aparelho e, logado,
 fica também na sua conta, que os outros aparelhos seguem enquanto não escolherem outro.
 Números, datas e o eixo dos gráficos acompanham o idioma (1.234,5 e 31/12 em português;
 1,234.5 e 12/31 em inglês).
 
-Por enquanto, o que vem pronto do servidor (mensagens de erro, alertas, avisos do WhatsApp e
-respostas da IA) continua em português; as próximas versões traduzem isso também.
+O que vem pronto do servidor também acompanha a tela: mensagens de erro, alertas, Infos, os
+itens de Limites, o catálogo de Notificações e os nomes que o painel dá (como "Kernel e outros").
+A IA (aba IA e chat do SSH) responde no idioma da tela. Os avisos que saem pelo **WhatsApp**
+ainda são em português (próxima versão). Logs, saída de comandos e nomes de arquivos nunca são
+traduzidos.
 
 **Texto novo ou outro idioma:** o texto da tela fica no `app.js` em português, sempre dentro
 de `T('…')`, com os valores como `{0}`, `{1}` (o idioma muda a ordem se precisar):
@@ -696,8 +699,23 @@ toast(T('Backup de {0} desligado.', [nome]));
 A tradução fica em `internal/web/static/i18n/en.js`, com a frase em português como chave. O
 `go test ./internal/web/` falha se faltar tradução, se sobrar tradução de texto que não existe
 mais, se uma tradução perder um `{0}` ou uma tag HTML, ou se um texto com acento ficar fora do
-`T()`. Para outro idioma: um `i18n/<código>.js` no mesmo formato, o código em `LANGS`
-(`app.js`) e em `Langs` (`internal/web/users.go`) e o `<script>` dele no `index.html`.
+`T()`.
+
+**No servidor (Go)** o texto continua escrito em português, como sempre; a tradução acontece na
+saída. A tela manda o idioma em cada pedido (`X-VPMon-Lang`) e o servidor traduz o texto das
+respostas JSON pelo catálogo `internal/i18n/en.json`: `exact` para textos fixos e `formats` para
+os montados com valores, do jeito que estão no código (`"Disco %.0f%% cheio"`, ou
+`nome + " está unhealthy"`, que vira `"%s está unhealthy"`). O texto pronto é reconhecido pelo
+formato, os valores são traduzidos também (ex.: `3 dias`) e o número vira o do idioma; a
+tradução pode trocar a ordem com `%[2]s`. Sem o cabeçalho (curl e outros clientes), tudo sai em
+português. O `go test ./internal/i18n/` lê o código Go e falha se um texto de tela em português
+ficar sem tradução ou se sobrar tradução; `VPMON_I18N_DUMP=faltando.json go test -run
+TestServerTextsHaveEnglish ./internal/i18n/` grava o que falta. Valores que a tela usa como
+código (área, nível, chave do alerta) ficam de fora de propósito.
+
+Para outro idioma: um `i18n/<código>.js` (tela) e o catálogo do servidor no mesmo formato, o
+código em `LANGS` (`app.js`) e em `Langs` (`internal/web/users.go`), o `<script>` no
+`index.html` e o catálogo carregado em `internal/i18n`.
 
 ## Versões e novidades
 
@@ -1256,6 +1274,7 @@ internal/cleanup/     limpeza do disco: cache de build, imagens sem nome, logs (
 internal/backup/      backups dos bancos: reconhece, faz o dump (exec), cifra, envia, agenda, retenção, avisos
 internal/age/         cifra no formato age v1 (X25519), compatível com a ferramenta oficial
 internal/s3/          cliente S3/R2 só com a biblioteca padrão (assinatura v4, envio em partes)
+internal/i18n/        tradução do texto do servidor na saída (catálogo en.json, formatos com valores)
 internal/sshchat/     SSH pela tela: chave do painel, conexão, shell do chat (marcadores), registro
 internal/xcrypto/     cópia do golang.org/x/crypto (BSD): ChaCha20-Poly1305, SSH; não editar à mão
 internal/web/         HTTP, login, troca de senha, chat (SSE), arquivos estáticos (static/; idiomas em static/i18n/)
