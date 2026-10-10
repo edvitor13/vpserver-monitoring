@@ -1570,9 +1570,9 @@
     const m = document.createElement('div');
     m.className = 'modal';
     m.innerHTML = `<div class="card login-card settings-card" role="dialog" aria-modal="true" aria-labelledby="st-t">
+      <button class="icon-btn st-close" type="button" data-act="close" aria-label="${T('Fechar')}">${icon('x')}</button>
       <div class="card-h"><div><h2 id="st-t">${icon('gear')}${T('Configurações')}</h2>
-        <div class="muted st-who">${icon('user')}${esc(me.user)} · ${esc(roleText(me))} · ${esc(verLabel())}${verDate() ? ` ${T('de {0}', [esc(verDate())])}` : ''}</div></div>
-        <button class="icon-btn" type="button" data-act="close" aria-label="${T('Fechar')}">${icon('x')}</button></div>
+        <div class="muted st-who">${icon('user')}${esc(me.user)} · ${esc(roleText(me))} · ${esc(verLabel())}${verDate() ? ` ${T('de {0}', [esc(verDate())])}` : ''}</div></div></div>
       ${langPickHTML(true)}
       ${tabs.length > 1 ? `<div class="seg" role="tablist" style="margin-bottom:14px">
         ${tabs.map(([k, l]) => `<button type="button" data-act="stab" data-v="${k}" aria-pressed="${tab === k}">${l}</button>`).join('')}</div>` : ''}
