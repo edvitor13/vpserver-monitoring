@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -391,5 +392,21 @@ func TestQueueOneAtATime(t *testing.T) {
 	}
 	if len(e.st.keys(".age")) != 2 || len(e.st.keys("loja-cache/monthly/loja-cache-")) != 1 {
 		t.Fatalf("os dois feitos (diário: o 1º vira mensal): %v", e.st.keys(""))
+	}
+}
+
+// No contêiner o sistema de arquivos é só leitura fora de /data: o teste do
+// armazenamento não pode depender do /tmp.
+func TestStorageTestDoesNotNeedSystemTemp(t *testing.T) {
+	e := setup(t)
+	missing := filepath.Join(t.TempDir(), "nao-existe", "tmp")
+	for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(k, missing)
+	}
+	if _, err := e.s.SaveStorage(context.Background(), storage(), ""); err != nil {
+		t.Fatalf("com o /tmp indisponível: %v", err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(e.s.tmp, "*")); len(left) != 0 {
+		t.Fatalf("sobrou arquivo de teste: %v", left)
 	}
 }
