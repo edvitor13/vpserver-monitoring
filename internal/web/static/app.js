@@ -35,6 +35,23 @@
     const out = (CAT && CAT[s]) || s;
     return vals ? out.replace(/\{(\d+)\}/g, (m, i) => (vals[i] !== undefined ? vals[i] : m)) : out;
   }
+  const langPickHTML = (save) => `<div class="lang-pick"><span class="lang-l">${icon('globe')}Idioma · Language</span>
+    <div class="seg" role="group" aria-label="Idioma · Language">${Object.entries(LANGS).map(([k, l]) => `<button type="button" data-act="lang"
+      data-v="${k}" data-save="${save ? 1 : 0}" aria-pressed="${k === LANG}" lang="${k}">${l}</button>`).join('')}</div></div>`;
+  // o idioma salvo na conta vale nos aparelhos que ainda não escolheram um
+  function followAccountLang(me) {
+    if (!me || !LANGS[me.lang] || me.lang === LANG || store.get('lang', '')) return false;
+    store.set('lang', me.lang);
+    location.reload();
+    return true;
+  }
+  // troca o idioma (escolha explícita: vale neste aparelho e, logado, na conta)
+  async function setLang(l, save) {
+    if (!LANGS[l]) return;
+    store.set('lang', l);
+    if (save) await api('/api/lang', { method: 'POST', body: JSON.stringify({ lang: l }) }).catch(() => {});
+    location.reload();
+  }
 
   const NF = [0, 1, 2].map((d) => new Intl.NumberFormat(LOCALE, { maximumFractionDigits: d }));
   const num = (v, d = 1) => (v == null || isNaN(v) ? '—' : NF[d].format(v));
@@ -131,6 +148,7 @@
     chev: '<polyline points="6 9 12 15 18 9"/>',
     db: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
     upload: '<path d="M12 21V9M7 14l5-5 5 5"/><path d="M5 3h14"/>',
+    globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
     shell: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m6 9 3 3-3 3M12 15h6"/>',
     eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     eyeoff: '<path d="M17.9 17.9A10 10 0 0 1 12 20c-7 0-11-8-11-8a18.4 18.4 0 0 1 5.1-5.9"/><path d="M9.9 4.2A9 9 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.2 3.2"/><path d="m1 1 22 22"/><path d="M14.1 14.1a3 3 0 1 1-4.2-4.2"/>',
@@ -473,6 +491,7 @@
           <div class="form-err" id="login-err" role="alert">${esc(msg || '')}</div>
           <button class="btn primary" type="submit">${T('Entrar')}</button>
         </form>
+        ${langPickHTML(false)}
       </div><footer class="foot foot-login">${versionHTML()}</footer></div>`;
     $('#lu').focus();
     $('#login-form').addEventListener('submit', async (e) => {
@@ -1554,6 +1573,7 @@
       <div class="card-h"><div><h2 id="st-t">${icon('gear')}${T('Configurações')}</h2>
         <div class="muted st-who">${icon('user')}${esc(me.user)} · ${esc(roleText(me))} · ${esc(verLabel())}${verDate() ? ` ${T('de {0}', [esc(verDate())])}` : ''}</div></div>
         <button class="icon-btn" type="button" data-act="close" aria-label="${T('Fechar')}">${icon('x')}</button></div>
+      ${langPickHTML(true)}
       ${tabs.length > 1 ? `<div class="seg" role="tablist" style="margin-bottom:14px">
         ${tabs.map(([k, l]) => `<button type="button" data-act="stab" data-v="${k}" aria-pressed="${tab === k}">${l}</button>`).join('')}</div>` : ''}
       <div id="st-body"></div></div>`;
@@ -4143,6 +4163,7 @@
       if (a === 'install') { closeDrawer(); closeInstallBar(); installApp(); return; }
       if (a === 'install-later') { closeInstallBar(); toast(T('Dá para instalar depois pelo menu Mais.')); return; }
       if (a === 'pause') { togglePause(v, act.dataset.pause === '1'); return; }
+      if (a === 'lang') { setLang(v, act.dataset.save === '1'); return; }
       if (a === 'theme') {
         if (act.closest('.sheet')) closeDrawer();
         const next = isDark() ? 'light' : 'dark';
@@ -4176,6 +4197,7 @@
   // ------------------------------------------------------------------ início
   async function start() {
     try { S.me = await api('/api/me'); } catch { return; }
+    if (followAccountLang(S.me)) return;
     try { await loadFleet(); } catch { return; }
     renderShell();
     renderStrip();
@@ -4189,6 +4211,7 @@
     if (!window.uPlot) { await new Promise((r) => window.addEventListener('load', r, { once: true })); }
     let me;
     try { me = await api('/api/me'); } catch (e) { if (e.message !== 'login') showLogin(T('Não consegui falar com o painel.')); return; }
+    if (followAccountLang(me)) return;
     if (me.mustChange) showSetup();
     else start();
   }

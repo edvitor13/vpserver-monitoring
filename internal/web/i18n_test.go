@@ -2,6 +2,8 @@ package web
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -289,5 +291,38 @@ func TestIndexLoadsCatalogBeforeApp(t *testing.T) {
 	s := New(nil, NewAuth("u", "senha-muito-boa", "s", true, "", false), true, ai.Config{}, "", nil, nil)
 	if !strings.Contains(string(s.assets["/index.html"].body), `src="i18n/en.js?v=`) {
 		t.Fatal("o catálogo ganha o ?v= da versão, como o app.js")
+	}
+}
+
+func TestAccountLanguage(t *testing.T) {
+	a := NewAuth("chefe", "senha-muito-boa", "s", true, t.TempDir(), false)
+	h := New(nil, a, true, ai.Config{}, "", nil, nil).Handler()
+	c := sessionCookie(a, "chefe")
+	me := func() map[string]any {
+		req := httptest.NewRequest("GET", "/api/me", nil)
+		req.AddCookie(c)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var j map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &j)
+		return j
+	}
+	if l := me()["lang"]; l != "" {
+		t.Fatalf("sem escolha, o idioma fica vazio (vale o do navegador): %v", l)
+	}
+	if rec := postJSON(h, "/api/lang", `{"lang":"fr"}`, c); rec.Code != http.StatusBadRequest {
+		t.Fatalf("idioma desconhecido: %d", rec.Code)
+	}
+	if rec := postJSON(h, "/api/lang", `{"lang":"en"}`, c); rec.Code != 200 {
+		t.Fatalf("guardar: %d %s", rec.Code, rec.Body)
+	}
+	if l := me()["lang"]; l != "en" {
+		t.Fatalf("o idioma volta no /api/me (e a sessão continua): %v", l)
+	}
+	req := httptest.NewRequest("POST", "/api/lang", strings.NewReader(`{"lang":"en"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("sem login: %d", rec.Code)
 	}
 }

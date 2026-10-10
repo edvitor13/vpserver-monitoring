@@ -34,6 +34,7 @@ type User struct {
 	LastLogin  int64  `json:"lastLogin,omitempty"`
 	Epoch      string `json:"epoch,omitempty"` // muda junto com senha/permissões: derruba as sessões da pessoa
 
+	Lang     string     `json:"lang,omitempty"`     // idioma da tela escolhido pela pessoa ("" = o do navegador)
 	TOTP     *TOTPState `json:"totp,omitempty"`     // verificação em duas etapas (nil = desligada)
 	Asked2FA bool       `json:"asked2fa,omitempty"` // a recomendação de ligar o 2FA já foi feita
 }
@@ -397,6 +398,25 @@ func (a *Auth) MarkLogin(name string) {
 		if i := findUser(users, name); i >= 0 {
 			users[i].LastLogin = time.Now().Unix()
 		}
+		return users, nil
+	})
+}
+
+// Langs são os idiomas da tela (os catálogos em static/i18n; o português é o do código).
+var Langs = map[string]bool{"pt-BR": true, "en": true}
+
+// SetLang guarda o idioma escolhido (vale nos outros aparelhos da pessoa). Não
+// mexe no epoch: as sessões continuam.
+func (a *Auth) SetLang(name, lang string) error {
+	if !Langs[lang] {
+		return errors.New("idioma desconhecido")
+	}
+	return a.mutate(func(users []User) ([]User, error) {
+		i := findUser(users, name)
+		if i < 0 {
+			return nil, ErrNoUser
+		}
+		users[i].Lang = lang
 		return users, nil
 	})
 }
