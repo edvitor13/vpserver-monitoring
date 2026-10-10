@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/edvitor13/vpserver-monitoring/internal/ai"
+	"github.com/edvitor13/vpserver-monitoring/internal/backup"
 	"github.com/edvitor13/vpserver-monitoring/internal/cleanup"
 	"github.com/edvitor13/vpserver-monitoring/internal/fleet"
 	"github.com/edvitor13/vpserver-monitoring/internal/monitor"
@@ -43,6 +44,7 @@ type Server struct {
 	rawIndex  []byte           // index.html sem carimbo
 	fl        *fleet.Fleet     // vários servidores: central e/ou conectado a um central (nil = sem)
 	cl        *cleanup.Service // tela Limpeza (nil = sem)
+	bk        *backup.Service  // aba Backups (nil = sem)
 	sendLimit chatLimiter      // "enviar agora" da aba Notificações
 	pauseLim  chatLimiter      // pausar/retomar app
 	usersLim  chatLimiter      // criar/editar/remover usuários
@@ -124,6 +126,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/notify/groups", admin(s.notifyGroups))
 	mux.HandleFunc("POST /api/notify/send", admin(s.notifySend))
 	mux.HandleFunc("GET /api/fleet", admin(s.fleetGet))
+	// backups: só administradores
+	mux.HandleFunc("GET /api/backup", admin(s.backupGet))
+	mux.HandleFunc("POST /api/backup/storage", admin(s.backupStorage))
+	mux.HandleFunc("POST /api/backup/key", admin(s.backupKey))
+	mux.HandleFunc("POST /api/backup/retention", admin(s.backupRetention))
+	mux.HandleFunc("POST /api/backup/target", admin(s.backupTarget))
+	mux.HandleFunc("POST /api/backup/run", admin(s.backupRun))
+	mux.HandleFunc("GET /api/backup/objects", admin(s.backupObjects))
+	mux.HandleFunc("GET /api/backup/download", admin(s.backupDownload))
 	mux.HandleFunc("POST /api/fleet/tokens", admin(s.fleetTokenCreate))
 	mux.HandleFunc("POST /api/fleet/tokens/revoke", admin(s.fleetTokenRevoke))
 	mux.HandleFunc("POST /api/fleet/tokens/update", admin(s.fleetTokenUpdate))

@@ -33,8 +33,13 @@ func TestCleanerSameInBothComposes(t *testing.T) {
 		t.Fatal("o script do vpserver-cleaner difere entre deploy/compose.yml e o do instalador")
 	}
 	for _, c := range []string{string(deploy), string(composeYML)} {
-		if !strings.Contains(c, "|build/prune|images/prune)") || strings.Contains(c, "images/prune|") {
-			t.Fatal("o proxy deve liberar só pausar/retomar e as duas limpezas")
+		// escritas: só pausar/retomar, o exec dos backups e as duas limpezas
+		if !strings.Contains(c, `-allowPOST=(/v1\.[0-9]+)?/(containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/(pause|unpause|exec)|exec/[a-f0-9]+/start|build/prune|images/prune)`+"\n") {
+			t.Fatal("o proxy deve liberar só pausar/retomar, o exec dos backups e as duas limpezas")
+		}
+		// leitura: nada de inspect de contêiner (mostraria o ambiente, com senhas)
+		if !strings.Contains(c, `|exec/[a-f0-9]+/json)`+"\n") || strings.Contains(c, "containers/[a-zA-Z0-9][a-zA-Z0-9_.-]*/json") {
+			t.Fatal("o proxy deve ler só o resultado do exec, nunca o inspect do contêiner")
 		}
 	}
 }

@@ -6,9 +6,11 @@ package docker
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -619,3 +621,109 @@ func (c *Client) PruneDanglingImages(ctx context.Context) (Pruned, error) {
 	}
 	return Pruned{Freed: r.SpaceReclaimed, Removed: n}, err
 }
+
+// Exec roda cmd dentro do contêiner (sem terminal, sem entrada) e escreve a
+// saída padrão em stdout, aos poucos. Devolve o código de saída e o fim da
+// saída de erro (para a mensagem de falha). Só os backups usam: o proxy deixa
+// passar criar, iniciar e consultar exec.
+func (c *Client) Exec(ctx context.Context, container string, cmd, env []string, stdout io.Writer) (int, string, error) {
+	body, _ := json.Marshal(map[string]any{"AttachStdout": true, "AttachStderr": true, "Tty": false, "Cmd": cmd, "Env": env})
+	var created struct {
+		ID string `json:"Id"`
+	}
+	if err := c.postJSON(ctx, "/containers/"+url.PathEscape(container)+"/exec", body, http.StatusCreated, &created); err != nil {
+		return -1, "", err
+	}
+	if created.ID == "" {
+		return -1, "", errors.New("docker exec: sem id")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/exec/"+created.ID+"/start", strings.NewReader(`{"Detach":false,"Tty":false}`))
+	if err != nil {
+		return -1, "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.slow.Do(req)
+	if err != nil {
+		return -1, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return -1, "", fmt.Errorf("docker exec start: %d %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	tail := &tailBuffer{max: 4096}
+	if err := demux(resp.Body, stdout, tail); err != nil {
+		return -1, tail.String(), err
+	}
+	var inspect struct {
+		ExitCode int  `json:"ExitCode"`
+		Running  bool `json:"Running"`
+	}
+	if err := c.getJSON(ctx, "/exec/"+created.ID+"/json", nil, &inspect); err != nil {
+		return -1, tail.String(), err
+	}
+	if inspect.Running {
+		return -1, tail.String(), errors.New("docker exec: o comando ainda estava rodando")
+	}
+	return inspect.ExitCode, tail.String(), nil
+}
+
+func (c *Client) postJSON(ctx context.Context, path string, body []byte, want int, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != want {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("docker %s: %d %s", path, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out)
+}
+
+// demux separa o fluxo multiplexado do Docker (cabeçalho de 8 bytes: canal e
+// tamanho) em saída padrão e saída de erro.
+func demux(r io.Reader, stdout, stderr io.Writer) error {
+	br := bufio.NewReaderSize(r, 64<<10)
+	var hdr [8]byte
+	for {
+		if _, err := io.ReadFull(br, hdr[:]); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return fmt.Errorf("docker exec: fluxo cortado: %w", err)
+		}
+		n := int64(binary.BigEndian.Uint32(hdr[4:]))
+		dst := io.Discard
+		switch hdr[0] {
+		case 1:
+			dst = stdout
+		case 2:
+			dst = stderr
+		}
+		if _, err := io.CopyN(dst, br, n); err != nil {
+			return fmt.Errorf("docker exec: %w", err)
+		}
+	}
+}
+
+// tailBuffer guarda só os últimos max bytes.
+type tailBuffer struct {
+	max int
+	b   []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.b = append(t.b, p...)
+	if len(t.b) > t.max {
+		t.b = t.b[len(t.b)-t.max:]
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string { return strings.TrimSpace(string(t.b)) }

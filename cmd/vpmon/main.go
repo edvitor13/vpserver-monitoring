@@ -25,6 +25,7 @@ import (
 	_ "time/tzdata" // fuso horário embutido (a imagem não tem /usr/share/zoneinfo)
 
 	"github.com/edvitor13/vpserver-monitoring/internal/ai"
+	"github.com/edvitor13/vpserver-monitoring/internal/backup"
 	"github.com/edvitor13/vpserver-monitoring/internal/cleanup"
 	"github.com/edvitor13/vpserver-monitoring/internal/docker"
 	"github.com/edvitor13/vpserver-monitoring/internal/fleet"
@@ -158,7 +159,12 @@ func main() {
 	fl.Client = fleet.NewClient(dataDir, version, func() fleet.Report {
 		return fleet.FromOverview(mon.Overview(), nt.PanelURL(), nt.WhatsAppMode())
 	})
-	mon.SetExtraAlerts(func() []monitor.Alert { return append(nt.Alerts(), fl.Central.Alerts()...) })
+	// Backups dos bancos (docker exec pelo proxy, envio ao bucket configurado na tela).
+	bk := backup.New(backupSource{mon}, docker.New(env("VPMON_DOCKER", "http://vpserver-dockerproxy:2375")), dataDir)
+	bk.SetNotify(nt.Audit)
+	mon.SetExtraAlerts(func() []monitor.Alert {
+		return append(append(nt.Alerts(), fl.Central.Alerts()...), bk.Alerts()...)
+	})
 	nt.SetRelay(fl.Client)
 
 	// Limpeza do disco: cache de build e imagens sem nome pelo proxy; logs pelo vpserver-cleaner.
@@ -172,6 +178,7 @@ func main() {
 	go nt.Run(ctx)
 	go fl.Client.Run(ctx)
 	go cl.Run(ctx)
+	go bk.Run(ctx)
 	defer fl.Central.Save()
 
 	// IA (DeepSeek), pelas variáveis DEEPSEEK_*. A chave também pode
@@ -187,7 +194,7 @@ func main() {
 	}
 
 	auth := web.NewAuth(user, pass, secret, env("VPMON_COOKIE_SECURE", "true") == "true", dataDir, forceChange)
-	ws := web.New(mon, auth, env("VPMON_TRUST_CF", "true") == "true", aiCfg, filepath.Join(dataDir, "settings.json"), nt, fl).WithCleanup(cl).WithBuild(commit, built)
+	ws := web.New(mon, auth, env("VPMON_TRUST_CF", "true") == "true", aiCfg, filepath.Join(dataDir, "settings.json"), nt, fl).WithCleanup(cl).WithBackup(bk).WithBuild(commit, built)
 	fl.Client.SetLocal(ws.LocalView) // o central pode ler este painel (se compartilhado)
 	go fl.Client.RunViews(ctx)
 	srv := &http.Server{
@@ -227,3 +234,8 @@ func loadOrCreateSecret(p string) string {
 	}
 	return s
 }
+
+// backupSource dá aos backups os contêineres e o nome do servidor.
+type backupSource struct{ *monitor.Monitor }
+
+func (b backupSource) ServerName() string { return b.Overview().Server.Name }

@@ -81,9 +81,12 @@ mesma entrega quando são do mesmo assunto; assunto novo ganha issue própria.
   publicada** (acesso só pelo túnel da Cloudflare). Nunca `prune` global,
   `compose down -v` nem comando em outro projeto.
 - **Docker só pelo proxy** (`vpserver-dockerproxy`): leitura e, de escrita,
-  apenas pausar/retomar contêiner (`POST /containers/<id>/pause|unpause`) e as
+  apenas pausar/retomar contêiner (`POST /containers/<id>/pause|unpause`), as
   duas limpezas seguras (`POST /build/prune`, `/images/prune` só com
-  `dangling=true`). O próprio painel nunca pode ser pausado. Acrescentar qualquer
+  `dangling=true`) e o `exec` dos backups (`POST /containers/<id>/exec`,
+  `/exec/<id>/start`, `GET /exec/<id>/json`; liberado por decisão do dono em
+  09/10/2026, para ter backup sem contêiner ajudante). Nunca `inspect` de
+  contêiner (mostraria o ambiente). O próprio painel nunca pode ser pausado. Acrescentar qualquer
   outra escrita é decisão do dono do projeto, não da IA.
 - **Limpeza** (`internal/cleanup`): só o que não afeta as apps; nunca volume,
   contêiner, rede, imagem com nome ou em uso. Logs só pelo `vpserver-cleaner`
@@ -97,6 +100,15 @@ mesma entrega quando são do mesmo assunto; assunto novo ganha issue própria.
   desce pelo pedido aberto que ele mesmo deixa). O que chega com token é dado de
   fora: limite tamanho, não confie, e o WhatsApp emprestado só manda para os
   destinos do central (nunca para números vindos do outro servidor).
+- **Backups** (`internal/backup`): só administradores. Os comandos de dump são
+  fixos (`engines.go`) e rodam com `sh -c` dentro do contêiner do banco; nada
+  digitado na tela entra no texto do comando (o nome do banco vai como
+  `VPMON_DB`) e senha vai pelo ambiente, não como argumento. O servidor só tem
+  a chave pública; a privada aparece uma vez na tela e nunca é guardada nem
+  logada. Mudou a cifra? O teste com a ferramenta oficial `age` tem de passar
+  (`internal/age`, `TestOfficialAgeInterop`). `internal/xcrypto` é cópia: não
+  edite à mão. Nunca rode backup em servidor de verdade para testar: use o
+  Docker e o bucket falsos.
 - **Ver/controlar à distância:** só com o que o dono do servidor conectado liberou
   (ver, logs, controle total), na lista fechada `RemotePaths`/`RemoteWrites`
   conferida nos dois lados. Usuários, senhas/2FA, IA, WhatsApp e a conexão

@@ -45,6 +45,7 @@ aplicações (cada projeto do Docker Compose vira uma app).
 - [Vários servidores](#vários-servidores)
 - [Pausar e retomar uma aplicação](#pausar-e-retomar-uma-aplicação)
 - [Limpeza do disco](#limpeza-do-disco)
+- [Backups dos bancos](#backups-dos-bancos)
 - [Usuários e permissões](#usuários-e-permissões)
 - [Verificação em duas etapas](#verificação-em-duas-etapas)
 - [No celular](#no-celular)
@@ -434,6 +435,88 @@ mexe nos arquivos `*-json.log*` (nunca nas configurações ao lado).
 
 ---
 
+## Backups dos bancos
+
+A aba **Backups** (só administradores) faz backup dos bancos de dados dos contêineres para
+um bucket seu, no **Cloudflare R2** ou em qualquer armazenamento compatível com S3 (AWS S3,
+Backblaze B2, MinIO...). Nada de script, cron ou arquivo de configuração à parte: em cada
+servidor, é colar as credenciais, gerar a chave e ligar os bancos.
+
+**O que precisa:**
+
+1. **Um bucket e um token só dele.** No R2: *R2 → Create bucket*; depois *Manage R2 API
+   Tokens → Create API token* com **Object Read & Write**, restrito a esse bucket. O token dá
+   a **Access Key ID** e a **Secret Access Key**; o endpoint é
+   `https://<id-da-conta>.r2.cloudflarestorage.com` e a região, `auto`. A chave geral da
+   conta Cloudflare **não** serve (e não deve ser usada).
+2. **Uma chave de criptografia** no formato [age](https://age-encryption.org): o painel gera
+   o par e mostra a **chave privada uma única vez** (copiar ou baixar `chave.txt`). Guarde no
+   gerenciador de senhas: **sem ela, nenhum backup abre**. O servidor guarda só a pública.
+   Também dá para colar uma pública que você já tem.
+3. **Ligar os bancos**, cada um com a frequência: a cada hora, a cada 6 h ou uma vez por dia.
+
+Ao salvar o armazenamento, o painel **testa** gravando, conferindo, listando e apagando um
+arquivo pequeno. O segredo fica só no servidor (`/data/backup.json`, 600) e nunca volta para
+a tela.
+
+**Bancos** (reconhecidos pela imagem do contêiner; as credenciais vêm das variáveis do
+próprio contêiner, então a tela não pede senha de banco):
+
+| Banco | Dump (dentro do contêiner) | Conferido por | Arquivo |
+|---|---|---|---|
+| PostgreSQL (e PostGIS, Timescale, pgvector...) | `pg_dump -Fc` do banco do contêiner (`POSTGRES_DB`) ou do informado | código de saída e cabeçalho `PGDMP` | `.dump.age` |
+| MySQL / MariaDB / Percona | `mariadb-dump`/`mysqldump --single-transaction` (root: todos os bancos) | código e `-- Dump completed` no fim | `.sql.age` |
+| MongoDB | `mongodump --archive --gzip` | código e cabeçalho gzip | `.archive.gz.age` |
+| Redis / Valkey / KeyDB | `redis-cli --rdb` | código e cabeçalho `REDIS` | `.rdb.age` |
+
+Painéis de administração, exportadores e poolers com nome de banco (pgAdmin, Adminer,
+mongo-express, pgbouncer...) não entram. Réplicas aparecem uma vez (o banco é a app/serviço
+do Compose). Para Redis com senha, o contêiner precisa ter `REDIS_PASSWORD` (ou
+`VALKEY_PASSWORD`) no ambiente.
+
+**Como cada backup acontece:** o painel roda o comando fixo do banco com `docker exec`; a
+saída é **cifrada na hora** com a chave pública e vai para um arquivo temporário em `/data`;
+depois é enviada (em partes acima de 256 MB), o **tamanho é conferido no bucket**, e o
+temporário é apagado. Um backup por vez. Se falhar, tenta de novo em 15 min.
+
+**Onde ficam e por quanto tempo:**
+`<pasta>/<servidor>/<app-serviço>/<nível>/<app-serviço>-AAAA-MM-DDTHH-MMZ.<ext>.age`, com a
+pasta padrão `vpserver` (vários servidores podem dividir um bucket). O primeiro backup do
+mês depois das 06:00 UTC vai para `monthly/`, o primeiro do dia para `daily/` e o resto para
+`hourly/`. A **retenção** padrão é 2 dias (horários), 30 (diários) e 180 (mensais): o painel
+apaga o que passou, ou deixa isso para as regras de ciclo de vida do bucket. No R2, a cota
+grátis é de 10 GB-mês de armazenamento e as operações dos backups cabem com folga nela.
+
+**Avisos:** o tipo **Backups dos bancos** em Notificações (ligado por padrão) avisa no
+WhatsApp quando um backup falha, quando atrasa (passou do dobro do intervalo sem um bom)
+e quando volta a funcionar; a aba Infos mostra o atraso e a falha.
+
+**Restaurar** (no computador onde está a chave privada; teste de vez em quando num banco
+descartável): baixe o arquivo em *Arquivos* (ele sai cifrado) e
+
+```bash
+age -d -i chave.txt ARQUIVO.dump.age > banco.dump          # PostgreSQL
+docker exec -i <contêiner> pg_restore -U <usuário> -d <banco> --clean --if-exists < banco.dump
+
+age -d -i chave.txt ARQUIVO.sql.age > banco.sql            # MySQL / MariaDB
+docker exec -i <contêiner> sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' < banco.sql
+
+age -d -i chave.txt ARQUIVO.archive.gz.age > banco.archive.gz   # MongoDB
+docker exec -i <contêiner> mongorestore --archive --gzip --drop < banco.archive.gz
+```
+
+Redis: pare o Redis, troque o `dump.rdb` da pasta de dados pelo arquivo aberto e suba de
+novo.
+
+**Segurança:** os backups saem cifrados (nem o servidor nem o bucket conseguem abri-los
+sem a chave privada). Para tirar o dump, o proxy do Docker deixa o painel usar `exec`
+(criar, iniciar e consultar). Isso foi uma **escolha do dono do projeto** (sem contêiner
+ajudante): com o painel comprometido, daria para rodar comandos em qualquer contêiner. O
+painel em si só monta os comandos fixos acima; o nome de banco digitado na tela chega ao
+comando só como a variável `VPMON_DB`, nunca como texto do comando.
+
+---
+
 ## Usuários e permissões
 
 Dá para cadastrar **outras pessoas**, cada uma com o próprio login. O **primeiro
@@ -608,10 +691,11 @@ dois do WhatsApp, se ligado):
 - **`vpserver-dockerproxy`** ([wollomatic/socket-proxy](https://github.com/wollomatic/socket-proxy)):
   o único que toca o socket do Docker. Só deixa passar `GET` em `_ping`,
   `version`, `info`, `system/df`, `events`, `containers/json` e
-  `containers/<id>/logs`, e `POST` em `containers/<id>/pause` e `unpause` (o botão
-  Pausar/Retomar), `build/prune` e `images/prune` (a aba Limpeza). Nada de criar,
-  parar, apagar contêiner ou volume, `exec` ou `inspect`, que mostraria as variáveis
-  de ambiente (senhas) dos outros contêineres.
+  `containers/<id>/logs` e `exec/<id>/json`, e `POST` em `containers/<id>/pause` e
+  `unpause` (o botão Pausar/Retomar), `build/prune` e `images/prune` (a aba Limpeza) e
+  `containers/<id>/exec` com `exec/<id>/start` (o dump dos Backups). Nada de criar,
+  parar, apagar contêiner ou volume, nem `inspect`, que mostraria as variáveis de
+  ambiente (senhas) dos outros contêineres.
 - **`vpserver-sizer`** (busybox, 1 MB): a cada 5 min anota **só o tamanho** dos
   arquivos de log do Docker (`*-json.log`) num volume que o painel lê. Existe
   porque a API do Docker não informa o tamanho dos logs, e o painel não pode ler
@@ -838,10 +922,16 @@ requisição; requisição sem resposta cai em 100 s.
   mas não consegue mexer em nenhum. Nunca lê a linha de comando nem o
   ambiente dos processos.
 - **Docker só pelo proxy** (lista acima). Nem com o painel comprometido daria
-  para criar, parar, apagar ou entrar em contêiner, apagar volume, nem ler o ambiente
-  dos outros. O máximo é pausar/retomar (o próprio painel nunca) e as limpezas da aba
-  Limpeza: cache de build e imagens que nenhum contêiner usa (o pior caso seria perder
-  imagens antigas para rollback, nunca uma app no ar ou dados) e logs do Docker.
+  para criar, parar ou apagar contêiner, apagar volume, nem ler o ambiente dos outros
+  pela API. O que ele pode: pausar/retomar (o próprio painel nunca), as limpezas da aba
+  Limpeza (cache de build, imagens que nenhum contêiner usa e logs do Docker) e o
+  **`exec` dos Backups**, que é o ponto mais sensível: com o painel comprometido, daria
+  para rodar comandos dentro dos contêineres (escolha do dono do projeto, para ter
+  backup sem contêiner ajudante; ver [Backups dos bancos](#backups-dos-bancos)).
+- **Backups:** só administradores (a API recusa os demais); ligar um banco, fazer agora e
+  trocar a chave pedem confirmação; os arquivos saem cifrados com `age` e o servidor só
+  tem a chave pública; o segredo do bucket fica em `/data/backup.json` (600) e nunca volta
+  para a tela; o download entrega o arquivo ainda cifrado e só dos backups deste servidor.
 - **Limpeza:** exige a permissão **Limpar o disco**, confirmação na tela (`confirm: true`
   na API), uma por vez, e fica no histórico e no WhatsApp. O `vpserver-cleaner` tem acesso
   de escrita à pasta dos contêineres, por isso não tem rede nem entrada além dos IDs
@@ -1030,7 +1120,8 @@ validada para daltonismo nos dois temas. Status sempre com ícone + texto.
 `/api/login/2fa` (segundo passo), `/api/2fa/setup|enable|disable|recovery|dismiss` (o próprio 2FA),
 `/api/apps/pause` (ações); `GET/POST /api/users`, `POST /api/users/update|reset|delete|2fa-off`
 (gestão de usuários); `GET /api/cleanup`, `POST /api/cleanup/run|auto` (limpeza; o `run` exige
-`"confirm": true`); `/api/settings*` e `/api/notify*` (administradores); `GET /api/fleet/servers`
+`"confirm": true`); `GET /api/backup|backup/objects|backup/download`, `POST /api/backup/storage|key|retention|target|run`
+(backups, administradores; ligar, fazer agora e trocar a chave exigem `"confirm": true`); `/api/settings*` e `/api/notify*` (administradores); `GET /api/fleet/servers`
 (cards da aba Servidores), `GET /api/fleet`, `POST /api/fleet/tokens|tokens/update|tokens/revoke|connect|disconnect|whatsapp`
 (administradores). Entre painéis, sem cookie e com `Authorization: Bearer vps_…`:
 `POST /api/fleet/report` (resumo por minuto), `/api/fleet/notify` (aviso pelo WhatsApp do central),
@@ -1056,6 +1147,10 @@ internal/ai/          cliente da DeepSeek (streaming + function calling) e o la�
 internal/notify/      notificações: cliente da Evolution (WhatsApp), alertas, resumos, análises da IA
 internal/fleet/       vários servidores: tokens e resumos no central, conexão e WhatsApp emprestado
 internal/cleanup/     limpeza do disco: cache de build, imagens sem nome, logs (via vpserver-cleaner), automática
+internal/backup/      backups dos bancos: reconhece, faz o dump (exec), cifra, envia, agenda, retenção, avisos
+internal/age/         cifra no formato age v1 (X25519), compatível com a ferramenta oficial
+internal/s3/          cliente S3/R2 só com a biblioteca padrão (assinatura v4, envio em partes)
+internal/xcrypto/     ChaCha20-Poly1305 genérico copiado do golang.org/x/crypto (BSD); não editar à mão
 internal/web/         HTTP, login, troca de senha, chat (SSE), arquivos estáticos (static/)
 deploy/               compose.yml, env.example, receive.sh e on-server.sh (rodam no servidor)
 scripts/server.py     setup, deploy, logs, restart, rollback, password, ci-key

@@ -725,3 +725,41 @@ a.btn { text-decoration: none; color: inherit; }
 .alerts, .share, .app-facts, .rows, .chat, .msg.ai, .stack, .login-card form, .howto, .rcpts, .opts, .nlog, .cf-list,
 .ulist, .urow-edit, .perms, .passbox, .tf-section, .tf-enroll, .tf-codes, .srv-meters, .srv-alerts, .fl-st, .fl-share,
 #cl-body, .cl-items, .cl-apps, .cl-checks, .cl-never, .cl-steps, .cl-confirm { grid-template-columns: minmax(0, 1fr); }
+
+/* ---------- backups dos bancos ---------- */
+#bk-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.bk-steps { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; font-size: .88rem; }
+.bk-steps li { display: flex; gap: 8px; align-items: flex-start; color: var(--text-2); }
+.bk-steps li.done { color: var(--good-ink); }
+.bk-steps .i { flex: none; margin-top: 2px; }
+.bk-p { margin: 0 0 12px; font-size: .84rem; }
+.bk-two { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 10px; }
+.bk-three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.bk-three .input { width: 100%; min-width: 0; }
+.bk-key { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; min-width: 0; }
+.bk-key code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: .8rem; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); }
+.bk-priv { border-color: var(--warning); background: var(--warning-soft); }
+.bk-priv p { margin: 0 0 12px; font-size: .88rem; }
+.bk-help { font-size: .84rem; }
+.bk-help summary { cursor: pointer; color: var(--accent); }
+.bk-help ol { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.bk-dbs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.bk-db { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+.bk-db.on { border-color: var(--accent); }
+.bk-db-h { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; min-width: 0; }
+.bk-db-n { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; min-width: 0; flex: 1; }
+.bk-db-n > span { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.bk-db-n small { font-size: .76rem; }
+.bk-db-t { overflow-wrap: anywhere; }
+.bk-tag { flex: none; font-size: .72rem; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); }
+.bk-db-cfg { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 10px; }
+.bk-db-st { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .82rem; min-width: 0; }
+.bk-db-st span { display: inline-flex; align-items: center; gap: 6px; overflow-wrap: anywhere; min-width: 0; }
+.bk-err { color: var(--critical-ink); }
+.bk-files { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+.bk-file { display: flex; justify-content: space-between; gap: 10px; align-items: center; font-size: .84rem; min-width: 0; }
+.bk-file > span { display: flex; flex-direction: column; min-width: 0; }
+.bk-file small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-restore { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 10px; font-size: .84rem; }
+.bk-restore pre { margin: 0; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .78rem; }
+@media (max-width: 520px) { .bk-two { grid-template-columns: minmax(0, 1fr); } }
