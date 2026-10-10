@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/edvitor13/vpserver-monitoring/internal/ai"
@@ -25,29 +26,33 @@ import (
 	"github.com/edvitor13/vpserver-monitoring/internal/fleet"
 	"github.com/edvitor13/vpserver-monitoring/internal/monitor"
 	"github.com/edvitor13/vpserver-monitoring/internal/notify"
+	"github.com/edvitor13/vpserver-monitoring/internal/sshchat"
 )
 
 //go:embed static
 var staticFS embed.FS
 
 type Server struct {
-	mon       *monitor.Monitor
-	auth      *Auth
-	trustCF   bool
-	assets    map[string]asset
-	ai        *aiState // IA: configurada pela tela ou pelo .env (DEEPSEEK_*)
-	chatLimit chatLimiter
-	nt        *notify.Service // notificações pelo WhatsApp (nil = sem)
-	version   string          // versão do painel: vai no index.html e no X-VPMon-Version
-	commit    string          // commit e data da versão (rodapé)
-	built     string
-	rawIndex  []byte           // index.html sem carimbo
-	fl        *fleet.Fleet     // vários servidores: central e/ou conectado a um central (nil = sem)
-	cl        *cleanup.Service // tela Limpeza (nil = sem)
-	bk        *backup.Service  // aba Backups (nil = sem)
-	sendLimit chatLimiter      // "enviar agora" da aba Notificações
-	pauseLim  chatLimiter      // pausar/retomar app
-	usersLim  chatLimiter      // criar/editar/remover usuários
+	mon        *monitor.Monitor
+	auth       *Auth
+	trustCF    bool
+	assets     map[string]asset
+	ai         *aiState // IA: configurada pela tela ou pelo .env (DEEPSEEK_*)
+	chatLimit  chatLimiter
+	nt         *notify.Service // notificações pelo WhatsApp (nil = sem)
+	version    string          // versão do painel: vai no index.html e no X-VPMon-Version
+	commit     string          // commit e data da versão (rodapé)
+	built      string
+	rawIndex   []byte           // index.html sem carimbo
+	fl         *fleet.Fleet     // vários servidores: central e/ou conectado a um central (nil = sem)
+	cl         *cleanup.Service // tela Limpeza (nil = sem)
+	bk         *backup.Service  // aba Backups (nil = sem)
+	ssh        *sshchat.Service // aba SSH (nil = sem)
+	sshMu      sync.Mutex
+	sshUnlocks map[string]sshUnlock // navegadores que digitaram o código (veja ssh.go)
+	sendLimit  chatLimiter          // "enviar agora" da aba Notificações
+	pauseLim   chatLimiter          // pausar/retomar app
+	usersLim   chatLimiter          // criar/editar/remover usuários
 }
 
 type asset struct {
@@ -135,6 +140,22 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/backup/run", admin(s.backupRun))
 	mux.HandleFunc("GET /api/backup/objects", admin(s.backupObjects))
 	mux.HandleFunc("GET /api/backup/download", admin(s.backupDownload))
+	// SSH pela tela: só administradores com 2FA (o resto das travas em ssh.go)
+	mux.HandleFunc("GET /api/ssh", admin(s.sshGet))
+	mux.HandleFunc("GET /api/ssh/probe", admin(s.sshProbe))
+	mux.HandleFunc("POST /api/ssh/target", admin(s.sshTarget))
+	mux.HandleFunc("POST /api/ssh/newkey", admin(s.sshNewKey))
+	mux.HandleFunc("POST /api/ssh/enable", admin(s.sshEnable))
+	mux.HandleFunc("POST /api/ssh/disable", admin(s.sshDisable))
+	mux.HandleFunc("POST /api/ssh/unlock", admin(s.sshUnlockRoute))
+	mux.HandleFunc("POST /api/ssh/open", admin(s.sshOpen))
+	mux.HandleFunc("POST /api/ssh/lock", admin(s.sshLock))
+	mux.HandleFunc("POST /api/ssh/run", admin(s.sshRun))
+	mux.HandleFunc("POST /api/ssh/input", admin(s.sshInput))
+	mux.HandleFunc("GET /api/ssh/poll", admin(s.sshPoll))
+	mux.HandleFunc("GET /api/ssh/complete", admin(s.sshComplete))
+	mux.HandleFunc("GET /api/ssh/log", admin(s.sshLog))
+	mux.HandleFunc("POST /api/ssh/ai", admin(s.sshAI))
 	mux.HandleFunc("POST /api/fleet/tokens", admin(s.fleetTokenCreate))
 	mux.HandleFunc("POST /api/fleet/tokens/revoke", admin(s.fleetTokenRevoke))
 	mux.HandleFunc("POST /api/fleet/tokens/update", admin(s.fleetTokenUpdate))

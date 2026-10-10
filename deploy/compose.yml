@@ -73,6 +73,9 @@ services:
       - sizes:/sizes:ro
       - cleanreq:/clean # pedidos de limpeza de log para o vpserver-cleaner
     networks: [edge, docker, whatsapp]
+    # o próprio servidor visto de dentro do contêiner: destino do SSH pela tela
+    # (desligado até um administrador com 2FA ativar; veja a aba SSH)
+    extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on: [dockerproxy]
     healthcheck:
       test: ["CMD", "/app/vpmon", "healthcheck"]

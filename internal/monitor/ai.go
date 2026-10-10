@@ -100,6 +100,10 @@ var (
 	reIPv4   = regexp.MustCompile(`\b(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}\b`)
 	reLong   = regexp.MustCompile(`\b[A-Za-z0-9+/_-]{40,}={0,2}`)
 	reURLPwd = regexp.MustCompile(`(://[^:/\s@]+):[^@\s/]+@`)
+	// variáveis e configs com o segredo no nome: DB_PASSWORD=..., AWS_SECRET_ACCESS_KEY: ...,
+	// GITHUB_TOKEN="..." (o \b do reKV não pega o nome colado num prefixo com _)
+	reEnvKV = regexp.MustCompile(`(?i)\b([A-Za-z0-9_.-]*(?:passw(?:or)?d|pass\b|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?|senha)[A-Za-z0-9_.-]*)(\s*[:=]\s*["']?)([^\s"'&,;}]+)`)
+	rePEM   = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)`)
 )
 
 // MaskURLPassword esconde a senha de URLs com credencial (postgresql://user:senha@host).
@@ -108,6 +112,8 @@ func MaskURLPassword(s string) string { return reURLPwd.ReplaceAllString(s, "$1:
 // Redact mascara tokens, senhas, e-mails, segredos longos e o fim dos IPs.
 func Redact(s string) string {
 	s = MaskURLPassword(s)
+	s = rePEM.ReplaceAllString(s, "[chave privada]")
+	s = reEnvKV.ReplaceAllString(s, "$1$2[oculto]")
 	s = reJWT.ReplaceAllString(s, "[jwt]")
 	s = reBearer.ReplaceAllString(s, "$1 [oculto]")
 	s = reKV.ReplaceAllString(s, "$1$2[oculto]")

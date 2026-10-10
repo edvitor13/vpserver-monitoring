@@ -104,6 +104,7 @@
     chev: '<polyline points="6 9 12 15 18 9"/>',
     db: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
     upload: '<path d="M12 21V9M7 14l5-5 5 5"/><path d="M5 3h14"/>',
+    shell: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m6 9 3 3-3 3M12 15h6"/>',
     eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     eyeoff: '<path d="M17.9 17.9A10 10 0 0 1 12 20c-7 0-11-8-11-8a18.4 18.4 0 0 1 5.1-5.9"/><path d="M9.9 4.2A9 9 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.2 3.2"/><path d="m1 1 22 22"/><path d="M14.1 14.1a3 3 0 1 1-4.2-4.2"/>',
     layers: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
@@ -290,7 +291,11 @@
       showSetup();
       throw new Error('login');
     }
-    if (!r.ok) throw new Error((j.error && j.error.message) || `Erro ${r.status}`);
+    if (!r.ok) {
+      const e = new Error((j.error && j.error.message) || `Erro ${r.status}`);
+      e.code = j.error && j.error.code; // estável: a tela decide por ele (ex.: ssh_locked)
+      throw e;
+    }
     return j;
   }
   let toastT;
@@ -428,6 +433,7 @@
     closeDrawer();
     S.ov = null;
     S.me = null;
+    S.sh = S.shInfo = null; // o chat de SSH é de quem estava logado
     pingVersion();
     clearTimeout(pollT);
     $('#app').innerHTML = `
@@ -631,7 +637,7 @@
   const TABS = [['overview', 'Visão geral', 'grid', 'Início'], ['servers', 'Servidores', 'layers', 'Servidores'], ['infos', 'Infos', 'info', 'Infos'],
     ['apps', 'Aplicações', 'box', 'Apps'], ['traffic', 'Banda', 'net', 'Banda'], ['logs', 'Logs', 'term', 'Logs'],
     ['system', 'Sistema', 'server', 'Sistema'], ['limits', 'Limites', 'load', 'Limites'],
-    ['cleanup', 'Limpeza', 'broom', 'Limpeza'], ['backups', 'Backups', 'db', 'Backups'], ['users', 'Usuários', 'users', 'Usuários'],
+    ['cleanup', 'Limpeza', 'broom', 'Limpeza'], ['backups', 'Backups', 'db', 'Backups'], ['ssh', 'SSH', 'shell', 'SSH'], ['users', 'Usuários', 'users', 'Usuários'],
     ['ai', 'IA', 'spark', 'IA'], ['notify', 'Notificações', 'bell', 'Avisos']]; // IA e WhatsApp juntas, no fim
   const BNAV = ['overview', 'apps', 'infos', 'ai']; // no celular, o resto fica em "Mais"
   // só as visíveis (em outro servidor não há IA): completa com Servidores/Banda
@@ -653,7 +659,7 @@
     : [u.actions && 'Ações nas apps', u.manage && 'Gerencia usuários', u.clean && 'Limpa o disco'].filter(Boolean).join(' · ') || 'Só leitura');
   // em outro servidor: tudo dele, menos o que nunca vai à distância (usuários, IA, WhatsApp)
   const REMOTE_TABS = new Set(['overview', 'servers', 'infos', 'apps', 'traffic', 'logs', 'system', 'limits', 'cleanup']);
-  const visibleTabs = () => TABS.filter(([k]) => (k !== 'notify' || can.admin()) && (k !== 'backups' || can.admin()) && (k !== 'users' || can.manage())
+  const visibleTabs = () => TABS.filter(([k]) => (k !== 'notify' || can.admin()) && (k !== 'backups' || can.admin()) && (k !== 'ssh' || can.admin()) && (k !== 'users' || can.manage())
     && (!S.remote || (REMOTE_TABS.has(k) && (k !== 'logs' || S.remote.logs || S.remote.control))));
   const tabHref = (k) => `#/${k === 'overview' ? '' : k}`;
   const countHTML = (k) => (k === 'infos' ? '<span class="count infos-count" hidden></span>' : '');
@@ -3146,7 +3152,841 @@
     },
   };
 
-  const VIEWS = { overview, servers: serversView, cleanup: cleanupView, backups: backupsView, users: usersView, infos: infosView, ai: aiView, apps: appsView, traffic: trafficView, logs: logsView, system: systemView, limits: limitsView, notify: notifyView };
+  // ------------------------------------------------------------------ aba: SSH (o shell do servidor em forma de chat)
+  // Cada mensagem é um comando; a saída chega aos pedaços (long-poll). Programas
+  // de tela cheia não funcionam (não há terminal de verdade): a tela avisa antes.
+  const SSH_FULL = /^\s*(sudo\s+)?(vi|vim|nvim|nano|emacs|pico|top|htop|btop|less|more|watch|mc|tmux|screen|nmtui|ssh)(\s|$)/;
+  const SSH_ALT = {
+    top: 'top -bn1 | head -20', htop: 'top -bn1 | head -20', btop: 'top -bn1 | head -20', less: 'cat ARQUIVO ou tail -n 100 ARQUIVO', more: 'cat ARQUIVO',
+    watch: 'rodar o comando de novo', vi: "sed -i 's/velho/novo/' ARQUIVO (ou peça para a IA)", vim: "sed -i 's/velho/novo/' ARQUIVO (ou peça para a IA)",
+    nvim: "sed -i 's/velho/novo/' ARQUIVO", nano: "sed -i 's/velho/novo/' ARQUIVO (ou peça para a IA)", emacs: "sed -i 's/velho/novo/' ARQUIVO",
+    pico: "sed -i 's/velho/novo/' ARQUIVO", mc: 'ls -la e cp/mv', tmux: '—', screen: '—', nmtui: 'nmcli', ssh: '—',
+  };
+  const SSH_COMMON = [
+    ['df -h', 'espaço em disco'], ['free -h', 'memória'], ['uptime', 'tempo ligado e carga'],
+    ['top -bn1 | head -20', 'quem mais usa CPU'], ['ps aux --sort=-%mem | head -15', 'quem mais usa memória'],
+    ['du -sh * 2>/dev/null | sort -h | tail -15', 'o que mais ocupa nesta pasta'], ['ls -la', 'arquivos desta pasta'],
+    ['sudo docker ps', 'contêineres rodando'], ['sudo docker ps -a', 'todos os contêineres'], ['sudo docker stats --no-stream', 'uso de cada contêiner agora'],
+    ['sudo docker logs --tail 100 ', 'fim do log de um contêiner'], ['sudo docker compose ls', 'projetos do Compose'],
+    ['sudo systemctl status ', 'estado de um serviço'], ['sudo journalctl -n 100 --no-pager', 'fim do log do sistema'],
+    ['ss -tlnp', 'portas abertas'], ['ip -br a', 'endereços de rede'], ['cat /etc/os-release', 'versão do sistema'],
+    ['sudo apt list --upgradable', 'atualizações disponíveis'], ['tail -n 100 ', 'fim de um arquivo'], ['sudo -i', 'virar root (pede a senha)'],
+  ];
+  const SSH_START = ['df -h', 'free -h', 'sudo docker ps', 'uptime'];
+  const sshKey = (sid, id) => `${sid}:${id}`;
+  // texto de terminal → texto puro: tira cores e outras sequências, e o \r sem \n recomeça a linha (barras de progresso)
+  function termText(s) {
+    s = String(s || '').replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b[@-Z\\-_]/g, '').replace(/\r+\n/g, '\n');
+    s = s.split('\n').map((l) => { const i = l.lastIndexOf('\r'); return i >= 0 ? l.slice(i + 1) : l; }).join('\n');
+    return s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1d\x7f]/g, '');
+  }
+  // o que a pessoa digitou num programa rodando vem entre \x1e e \x1f
+  const outHTML = (s) => termText(s).split(/(\x1e[^\x1f]*\x1f)/).map((p) => (p.startsWith('\x1e')
+    ? `<span class="sb-in">› ${esc(p.slice(1, -1))}</span>` : esc(p))).join('');
+  const plainOut = (s) => termText(s).replace(/\x1e[^\x1f]*\x1f/g, '');
+  // pedido de senha no fim da saída de quem está rodando (sudo, su, ssh...)
+  const askingPassword = (out) => /(password|senha|passphrase|contraseña)[^\n]{0,80}:\s*$/i.test(termText(out).split('\n').pop() || '');
+  async function readSSE(r, on) {
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let k;
+      while ((k = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, k);
+        buf = buf.slice(k + 2);
+        let ev = 'message', d = '';
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event:')) ev = line.slice(6).trim();
+          else if (line.startsWith('data:')) d += line.slice(5).trim();
+        }
+        if (d) on(ev, JSON.parse(d));
+      }
+    }
+  }
+  const sshView = {
+    st() {
+      if (!S.sh) {
+        S.sh = { sid: '', ver: -1, lastId: 0, state: null, blocks: new Map(), items: [], nodes: new Map(), hist: [], hi: -1, draft: '',
+          mode: 'cmd', pw: false, pwDismiss: 0, aiBusy: false, abort: null, loop: 0, n: 1, sugg: [], sel: -1,
+          wrap: store.get('ssh-wrap', true) };
+      }
+      return S.sh;
+    },
+    mount(v) {
+      sshView.st();
+      v.innerHTML = '<div class="page" id="ssh-page"><div class="loading"><div class="spinner"></div></div></div>';
+      const page = $('#ssh-page');
+      page.addEventListener('click', sshView.onClick);
+      page.addEventListener('submit', sshView.onSubmit);
+      S.cleanup.push(() => sshView.stop());
+      sshView.load();
+    },
+    stop() {
+      const sh = sshView.st();
+      sh.loop++;
+      if (sh.pollAbort) sh.pollAbort.abort();
+      if (sh.abort) sh.abort.abort();
+    },
+    async load() {
+      const page = $('#ssh-page');
+      if (!page) return;
+      let j;
+      try { j = await api('/api/ssh'); } catch (e) {
+        if (e.message !== 'login') page.innerHTML = `<div class="alert crit"><div class="ic">${icon('crit')}</div><div class="alert-body"><div class="alert-t">${esc(e.message)}</div></div></div>`;
+        return;
+      }
+      S.shInfo = j;
+      const sh = sshView.st();
+      sh.stop = false;
+      if (!j.available) { page.innerHTML = `<div class="empty">O SSH pela tela não está disponível neste painel.</div>`; return; }
+      const head = `<div class="section-h"><div><h2>${icon('shell')} SSH do servidor</h2>
+        <p>Comandos no servidor por um chat: cada mensagem é um comando. Só administradores com 2FA, e abrir a sessão pede o código do app.</p></div></div>`;
+      if (!j.twoFA) {
+        page.innerHTML = `${head}<section class="card"><div class="card-h"><h2>${icon('shield')}Ligue o 2FA para usar o SSH</h2></div>
+          <p>O SSH pela tela só abre para quem tem a verificação em duas etapas ligada: além da senha, abrir a sessão pede o código do app de autenticação.</p>
+          <div class="controls"><button class="btn primary" type="button" data-act="settings">${icon('shield')}Ligar em Minha conta</button></div></section>`;
+        return;
+      }
+      if (!j.ssh.enabled) {
+        page.innerHTML = head + sshView.setupHTML(j);
+        sshView.probe(false);
+        return;
+      }
+      if (!j.unlocked) {
+        page.innerHTML = head + sshView.lockedHTML(j);
+        setTimeout(() => { const c = $('#ssh-code'); if (c) c.focus(); }, 50);
+        return;
+      }
+      sh.hist = (j.history || []).slice();
+      sshView.chat();
+    },
+    footHTML(v) {
+      return `<div class="ssh-foot muted">Ligado por ${esc(v.enabledBy || '—')} ${v.enabledAt ? `em ${dt(v.enabledAt)}` : ''} · <code>${esc(v.user)}@${esc(v.host)}</code>
+        · chave do servidor <code class="ssh-fp">${esc(v.hostKey || '—')}</code> · <button class="linkish" type="button" data-sa="log">Registro</button>
+        · <button class="linkish danger-t" type="button" data-sa="disable">Desligar o SSH</button></div>`;
+    },
+    setupHTML(j) {
+      const v = j.ssh;
+      return `<section class="card ssh-setup">
+        <div class="card-h"><h2>${icon('shell')}Ativar o SSH pela tela</h2>${badge('off', 'desligado')}</div>
+        <p>Ligado, o chat roda comandos no servidor como o usuário <code>${esc(v.user)}</code>, que vira root com <code>sudo</code> e a senha dele.
+          Abrir a sessão pede o código do app; ela fecha depois de ${j.idleMinutes} min parada; cada comando fica no registro (sem a saída e sem senhas).</p>
+        <div class="alert warn slim"><div class="ic">${icon('warn')}</div><div class="alert-body"><div class="alert-t">É acesso de verdade ao servidor</div>
+          <div class="alert-d">Um comando errado pode derrubar as aplicações ou apagar dados. Ligue só se for usar; dá para desligar a qualquer hora.</div></div></div>
+        <ol class="ssh-steps">
+          <li><h3>1. Prepare o servidor (uma vez)</h3>
+            <p>Entre no servidor pelo seu SSH de sempre e rode o comando abaixo. Ele cria o usuário <code>${esc(v.user)}</code>, põe no grupo do sudo,
+              autoriza a chave do painel só vinda da rede do contêiner (<code>${esc(v.nets.join(', '))}</code>), sem redirecionar portas, e no fim pede a senha que o sudo vai usar.</p>
+            <div class="ssh-code"><pre>${esc(v.setup)}</pre><button class="btn sm" type="button" data-copy="${esc(v.setup)}">Copiar</button></div>
+            <details class="ssh-adv"><summary>Usuário, endereço e porta</summary>
+              <form id="ssh-target" class="ssh-target">
+                <label class="field"><span>Usuário no servidor</span><input class="input" id="ssh-t-user" value="${esc(v.user)}" autocapitalize="off" spellcheck="false"></label>
+                <label class="field"><span>Endereço (visto do contêiner)</span><input class="input" id="ssh-t-host" value="${esc(v.host)}" autocapitalize="off" spellcheck="false"></label>
+                <label class="field"><span>Porta</span><input class="input" id="ssh-t-port" type="number" min="1" max="65535" value="${v.port}"></label>
+                <div class="controls"><button class="btn" type="submit">Salvar</button>
+                  <button class="btn" type="button" data-sa="newkey">${icon('key')}Gerar outra chave do painel</button></div>
+              </form>
+              <p class="muted">O padrão <code>host.docker.internal</code> é o próprio servidor visto de dentro do contêiner. Chave pública do painel:</p>
+              <div class="ssh-code"><pre>${esc(v.publicKey)}</pre></div></details></li>
+          <li><h3>2. Confira</h3><div id="ssh-probe"><div class="loading"><div class="spinner"></div></div></div>
+            <div class="controls"><button class="btn" type="button" data-sa="probe">${icon('refresh')}Verificar (entra com a chave do painel)</button></div></li>
+          <li><h3>3. Ative</h3><p>Digite o código do app de autenticação: o SSH liga e o chat já abre.</p>
+            <form id="ssh-enable" class="ssh-codeform"><input class="input ssh-code-in" id="ssh-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" aria-label="Código do app">
+              <button class="btn primary" type="submit" id="ssh-enable-btn">${icon('shell')}Ativar e abrir</button></form></li>
+        </ol></section>`;
+    },
+    // login: entra com a chave (só quando a pessoa pede, depois do passo 1); sem ele, só
+    // confere se o sshd responde (abrir a tela não vira tentativa de login falha)
+    async probe(login) {
+      const box = $('#ssh-probe');
+      if (!box) return;
+      box.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+      let p;
+      try { p = (await api(`/api/ssh/probe${login ? '?login=1' : ''}`)).probe; } catch (e) { box.innerHTML = `<div class="bk-err">${esc(e.message)}</div>`; return; }
+      if (!$('#ssh-probe')) return;
+      const row = (ok, t, d) => `<li class="${ok === null ? 'wait' : ok ? 'ok' : 'no'}">${icon(ok === null ? 'clock' : ok ? 'ok' : 'x')}<div><b>${t}</b>${d ? `<small>${d}</small>` : ''}</div></li>`;
+      const reach = row(p.reachable, 'O servidor SSH responde', p.reachable ? `chave do servidor <code>${esc(p.hostKey)}</code>${p.hostKeyNew ? ' <b class="danger-t">— diferente da aceita antes</b>' : ''}` : esc(p.error || ''));
+      box.innerHTML = login ? `<ul class="ssh-checks">${reach}
+        ${row(p.authorized, 'A chave do painel entra', p.authorized ? '' : p.reachable ? 'Rode o comando do passo 1 (ou confira usuário e porta).' : '')}
+        ${row(p.sudo, 'O usuário está no grupo do sudo', p.authorized ? `grupos: ${esc(p.groups || '—')}` : '')}</ul>
+        ${p.authorized && !p.sudo ? '<p class="muted">Sem o grupo do sudo, o chat funciona, mas não vira root.</p>' : ''}`
+        : `<ul class="ssh-checks">${reach}${row(null, 'A chave do painel entra', 'Depois de rodar o comando do passo 1, clique em Verificar.')}</ul>`;
+    },
+    lockedHTML(j) {
+      const v = j.ssh;
+      const open = (v.shells || []).length ? `<p class="muted">Com sessão aberta agora: ${v.shells.map(esc).join(', ')}.</p>` : '';
+      return `<section class="card ssh-lock"><div class="ssh-lock-in">${icon('lock')}<h2>Sessão de SSH fechada</h2>
+        <p>Digite o código do app de autenticação para abrir. A sessão vale neste navegador e fecha sozinha depois de ${j.idleMinutes} min parada.</p>
+        <form id="ssh-unlock" class="ssh-codeform"><input class="input ssh-code-in" id="ssh-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" aria-label="Código do app">
+          <button class="btn primary" type="submit">${icon('shell')}Abrir</button></form>${open}</div></section>${sshView.footHTML(v)}`;
+    },
+    // --- chat ---------------------------------------------------------------------------
+    chat() {
+      const sh = sshView.st();
+      const j = S.shInfo;
+      const ai = j.ai;
+      if (!ai && sh.mode === 'ai') sh.mode = 'cmd';
+      $('#ssh-page').innerHTML = `
+        <div class="ssh-bar"><span class="ssh-who" id="ssh-who"></span><code class="ssh-cwd" id="ssh-cwd"></code>
+          <span class="ssh-bar-acts"><button class="btn sm" type="button" data-sa="wrap" aria-pressed="${sh.wrap}" title="Quebrar linhas longas da saída">Quebrar linhas</button>
+          <button class="btn sm" type="button" data-sa="log">Registro</button>
+          <button class="btn sm" type="button" data-sa="end">${icon('logout')}Encerrar</button></span></div>
+        <section class="card ssh-chat${sh.wrap ? ' wrap' : ''}" id="ssh-chat">
+          <div class="ssh-log" id="ssh-log" aria-live="polite"></div>
+          <div class="ssh-sugg" id="ssh-sugg" role="listbox" hidden></div>
+          <div class="ssh-keys" role="toolbar" aria-label="Teclas">
+            <button type="button" data-k="ctrl-c" title="Interrompe o comando">Ctrl+C</button>
+            <button type="button" data-k="ctrl-d" title="Fim da entrada">Ctrl+D</button>
+            <button type="button" data-k="tab" title="Completar">Tab</button>
+            <button type="button" data-k="up" aria-label="Comando anterior">↑</button>
+            <button type="button" data-k="down" aria-label="Próximo comando">↓</button>
+            <button type="button" data-k="esc">Esc</button>
+            <button type="button" data-k="pw" title="Digitar uma senha (não aparece nem vai para o registro)">${icon('key')}Senha</button>
+            <button type="button" data-k="sudo" id="ssh-sudo">sudo -i</button>
+            <button type="button" data-k="clear" title="Limpa a tela (o servidor não muda)">Limpar</button>
+          </div>
+          <form class="ssh-form" id="ssh-form">
+            <button class="ssh-mode" type="button" data-k="mode" id="ssh-mode" ${ai ? '' : 'disabled title="Ponha a chave da IA em Configurações → IA"'}></button>
+            <textarea class="input" id="ssh-in" rows="1" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Comando"></textarea>
+            <input class="input" id="ssh-pw" type="password" autocomplete="off" hidden aria-label="Senha">
+            <button class="btn primary" type="submit" id="ssh-send" aria-label="Enviar">${icon('send')}</button>
+          </form>
+        </section>
+        ${sshView.footHTML(j.ssh)}
+        <div class="chat-note">Tab completa comandos e arquivos; ↑ e ↓ trazem os anteriores; Ctrl+C interrompe. Programas de tela cheia (vim, top, less) não funcionam aqui.
+          ${ai ? 'A IA (botão $/IA) sugere comandos e explica saídas; ela só vê o que você mandar, com senhas e tokens mascarados, e nunca roda nada sozinha.' : ''}</div>`;
+      const ta = $('#ssh-in');
+      ta.addEventListener('input', () => { sshView.grow(); sh.hi = -1; sshView.suggest(); });
+      ta.addEventListener('keydown', sshView.onKey);
+      $('#ssh-pw').addEventListener('keydown', (e) => { if (e.key === 'Escape') { sh.pw = false; sh.pwDismiss = sshView.lastBlock() ? sshView.lastBlock().to : 0; sshView.inputs(); } });
+      $('#ssh-sugg').addEventListener('mousedown', (e) => e.preventDefault()); // não tira o foco do campo
+      sh.nodes = new Map();
+      sh.items.forEach((it) => { it.dirty = true; });
+      sshView.paint();
+      sshView.inputs();
+      sshView.poll();
+      setTimeout(() => ta.focus(), 50);
+    },
+    lastBlock() { const sh = sshView.st(); return sh.blocks.get(sshKey(sh.sid, sh.lastId)); },
+    busy() { const sh = sshView.st(); return !!(sh.state && sh.state.busy); },
+    root() { const sh = sshView.st(); return !!(sh.state && sh.state.uid === 0); },
+    grow() {
+      const ta = $('#ssh-in');
+      if (!ta) return;
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(180, ta.scrollHeight) + 'px';
+      ta.style.overflowY = ta.scrollHeight > 180 ? 'auto' : 'hidden';
+    },
+    async poll() {
+      const sh = sshView.st();
+      const me = ++sh.loop;
+      let fails = 0;
+      while (sh.loop === me && $('#ssh-log')) {
+        sh.pollAbort = new AbortController();
+        const lb = sshView.lastBlock();
+        try {
+          const j = await api(`/api/ssh/poll?s=${encodeURIComponent(sh.sid)}&v=${sh.ver}&b=${sh.lastId}&o=${lb ? lb.to : 0}`, { signal: sh.pollAbort.signal });
+          if (sh.loop !== me) return;
+          fails = 0;
+          sshView.apply(j);
+        } catch (e) {
+          if (sh.loop !== me || e.name === 'AbortError' || e.message === 'login') return;
+          if (e.code === 'ssh_locked' || e.code === 'ssh_disabled' || e.code === 'ssh_2fa_required') { sshView.load(); return; }
+          fails++;
+          await new Promise((r) => setTimeout(r, Math.min(15000, 1500 * fails)));
+        }
+        if (sh.state && sh.state.closed) {
+          sshView.closed(sh.state.closed);
+          return;
+        }
+      }
+    },
+    apply(j) {
+      const sh = sshView.st();
+      const st = j.state;
+      if (st.session && st.session !== sh.sid) {
+        if (sh.sid && sh.items.length) sh.items.push({ k: 'i' + sh.n++, kind: 'i', text: 'Sessão nova.', dirty: true });
+        sh.sid = st.session;
+        sh.lastId = 0;
+        sh.closedShown = false;
+        sh.items.forEach((x) => { if (x.reopen) { x.reopen = false; x.dirty = true; } });
+      }
+      for (const bv of j.blocks) {
+        const key = sshKey(sh.sid, bv.id);
+        let b = sh.blocks.get(key);
+        if (!b) {
+          b = { ...bv };
+          sh.blocks.set(key, b);
+          sh.items.push({ k: 'b' + key, kind: 'b', key, dirty: true });
+        } else {
+          const out = bv.from === b.to ? b.out + bv.out : bv.out;
+          Object.assign(b, bv, { out });
+        }
+        if (b.out.length > 200000) { b.out = b.out.slice(-150000); b.cut = true; }
+        const it = sh.items.find((x) => x.key === key);
+        if (it) it.dirty = true;
+        sh.lastId = Math.max(sh.lastId, bv.id);
+      }
+      const wasBusy = sshView.busy();
+      sh.state = st;
+      sh.ver = st.ver;
+      if (wasBusy && !st.busy) { sh.pw = false; sh.pwDismiss = 0; }
+      const lb = sshView.lastBlock();
+      if (lb && st.busy && !sh.pw && askingPassword(lb.out) && lb.to !== sh.pwDismiss) { sh.pw = true; }
+      if (sh.blocks.size > 300) { // memória: só as últimas
+        const keep = new Set(sh.items.filter((x) => x.kind === 'b').slice(-120).map((x) => x.key));
+        for (const k of sh.blocks.keys()) if (!keep.has(k)) sh.blocks.delete(k);
+        sh.items = sh.items.filter((x) => x.kind !== 'b' || keep.has(x.key));
+      }
+      sshView.paint();
+      sshView.inputs();
+    },
+    closed(reason) {
+      const sh = sshView.st();
+      if (sh.closedShown) return;
+      sh.closedShown = true;
+      sh.items.push({ k: 'i' + sh.n++, kind: 'i', text: `A sessão terminou (${reason}).`, reopen: true, dirty: true });
+      sshView.paint();
+      sshView.inputs();
+    },
+    blockHTML(b) {
+      const sh = sshView.st();
+      const running = !b.end && sshView.busy() && b === sshView.lastBlock();
+      const status = running ? '<span class="sb-st run"><span class="spinner"></span>rodando</span>'
+        : b.code == null ? '<span class="sb-st off">interrompido</span>'
+          : b.code === 0 ? `<span class="sb-st ok" title="código de saída 0">${icon('ok')}0</span>`
+            : `<span class="sb-st bad" title="código de saída ${b.code}">${icon('x')}${b.code}</span>`;
+      const took = b.end ? ` · ${b.end - b.start < 1 ? '<1 s' : b.end - b.start < 120 ? `${b.end - b.start} s` : dur(b.end - b.start)}` : '';
+      const out = plainOut(b.out).trim() ? `<pre class="sb-out">${b.base || b.cut ? '<span class="sb-cut">… começo cortado (o painel guarda só o fim de saídas grandes)</span>\n' : ''}${outHTML(b.out)}</pre>`
+        : running ? '' : '<div class="sb-none">sem saída</div>';
+      const acts = running ? '' : `<div class="sb-acts">
+        ${plainOut(b.out).trim() ? `<button class="linkish" type="button" data-sa="copy" data-key="${esc(sshKey(sh.sid, b.id))}">Copiar saída</button>` : ''}
+        <button class="linkish" type="button" data-sa="again" data-key="${esc(sshKey(sh.sid, b.id))}">Rodar de novo</button>
+        ${S.shInfo && S.shInfo.ai ? `<button class="linkish" type="button" data-sa="explain" data-key="${esc(sshKey(sh.sid, b.id))}">${icon('spark')}Explicar</button>` : ''}</div>`;
+      return `<div class="sb-h"><span class="sb-p${b.uid === 0 ? ' root' : ''}">${b.uid === 0 ? '#' : '$'}</span><code class="sb-cmd">${esc(b.cmd)}</code>${status}</div>
+        <div class="sb-meta">${esc(b.by)} · ${hms(b.start * 1000)} · ${esc(b.cwd || '')}${b.note ? ` · ${esc(b.note)}` : ''}${took}</div>${out}${acts}`;
+    },
+    aiHTML(m) {
+      return `<div class="msg user ssh-q">${icon('spark')}<span>${esc(m.q)}</span></div>
+        <div class="msg ai"><div class="md">${md(m.content)}${m.streaming ? '<span class="caret"></span>' : ''}</div>
+        ${m.error ? `<div class="alert crit slim"><div class="ic">${icon('crit')}</div><div class="alert-body"><div class="alert-t">${esc(m.error)}</div></div></div>` : ''}
+        ${m.meta ? `<div class="msg-meta">${esc(m.meta)}</div>` : ''}</div>`;
+    },
+    emptyHTML() {
+      return `<div class="ssh-empty">${icon('shell')}<div><b>Cada mensagem é um comando no servidor.</b><br>
+        <span class="muted">A pasta e as variáveis continuam de um comando para o outro. Para virar root: <code>sudo -i</code> (pede a senha).</span></div>
+        <div class="suggest">${SSH_START.map((c) => `<button type="button" class="chip-btn mono" data-sa="fill" data-cmd="${esc(c)}">${esc(c)}</button>`).join('')}</div></div>`;
+    },
+    paint() {
+      const sh = sshView.st();
+      const log = $('#ssh-log');
+      if (!log) return;
+      const near = log.scrollHeight - log.scrollTop - log.clientHeight < 140;
+      if (!sh.items.length) {
+        log.innerHTML = sshView.emptyHTML();
+        sh.nodes = new Map();
+        return;
+      }
+      const empty = $('.ssh-empty', log);
+      if (empty) empty.remove();
+      let prev = null;
+      for (const it of sh.items) {
+        let node = sh.nodes.get(it.k);
+        if (!node) {
+          node = document.createElement('div');
+          node.dataset.key = it.k;
+          sh.nodes.set(it.k, node);
+          it.dirty = true;
+          if (prev) prev.after(node); else log.prepend(node);
+        }
+        if (it.dirty) {
+          it.dirty = false;
+          if (it.kind === 'b') {
+            const b = sh.blocks.get(it.key);
+            if (!b) continue;
+            const pre = $('.sb-out', node);
+            const keepScroll = pre && pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+            node.className = 'sb';
+            node.innerHTML = sshView.blockHTML(b);
+            const npre = $('.sb-out', node);
+            if (npre && (keepScroll || !pre)) npre.scrollTop = npre.scrollHeight;
+          } else if (it.kind === 'a') {
+            node.className = 'ssh-ai';
+            node.innerHTML = sshView.aiHTML(it);
+            if (!it.streaming) {
+              $$('.md pre', node).forEach((pre) => {
+                const cmd = pre.textContent.replace(/^\s*\$\s+/, '').trim();
+                if (!cmd) return;
+                const bar = document.createElement('div');
+                bar.className = 'sa-run';
+                bar.innerHTML = `<button class="btn sm primary" type="button" data-sa="run-ai">${icon('play')}Rodar</button><button class="btn sm" type="button" data-sa="edit-ai">Editar</button>`;
+                bar.dataset.cmd = cmd;
+                pre.after(bar);
+              });
+            }
+          } else {
+            node.className = 'ssh-info';
+            node.innerHTML = `${icon('info')}<span>${esc(it.text)}</span>${it.reopen ? '<button class="btn sm primary" type="button" data-sa="reopen">Abrir de novo</button>' : ''}`;
+          }
+        }
+        prev = node;
+      }
+      for (const [k, node] of sh.nodes) if (!sh.items.some((x) => x.k === k)) { node.remove(); sh.nodes.delete(k); }
+      if (near) log.scrollTop = log.scrollHeight;
+    },
+    // cabeçalho, campo (comando, entrada ou senha) e teclas conforme o estado
+    inputs() {
+      const sh = sshView.st();
+      const st = sh.state || {};
+      const ta = $('#ssh-in'), pw = $('#ssh-pw');
+      if (!ta) return;
+      const v = S.shInfo.ssh;
+      const root = st.uid === 0;
+      $('#ssh-who').innerHTML = `${icon('shell')}<b>${root ? 'root' : esc(v.user)}</b>${root ? ' <span class="badge-sudo">modo sudo</span>' : ''}`;
+      $('#ssh-who').classList.toggle('root', root);
+      const cwd = st.cwd || '';
+      $('#ssh-cwd').textContent = cwd.length > 60 ? '…' + cwd.slice(-59) : cwd; // pasta longa: mostra o fim
+      $('#ssh-cwd').title = cwd;
+      const closed = !!st.closed;
+      const busy = !!st.busy;
+      const ai = sh.mode === 'ai';
+      $('#ssh-mode').innerHTML = ai ? `${icon('spark')}<span>IA</span>` : '<span class="mono">$</span>';
+      $('#ssh-mode').setAttribute('aria-pressed', ai);
+      $('#ssh-mode').title = ai ? 'Perguntando à IA (toque para voltar aos comandos)' : 'Comandos (toque para perguntar à IA)';
+      const showPw = sh.pw && busy && !ai;
+      pw.hidden = !showPw;
+      ta.hidden = showPw;
+      ta.disabled = closed && !ai;
+      ta.placeholder = closed ? 'Sessão encerrada' : ai ? 'Pergunte à IA… ex.: por que o disco encheu?' : busy ? 'Entrada para o programa (Enter manda a linha)' : root ? 'Comando como root…' : 'Comando… ex.: df -h';
+      pw.placeholder = 'Senha (não aparece nem vai para o registro)';
+      if (showPw && document.activeElement !== pw) setTimeout(() => pw.focus(), 0);
+      const keys = (k) => $(`[data-k="${k}"]`);
+      keys('ctrl-d').disabled = keys('esc').disabled = keys('pw').disabled = !busy || closed;
+      keys('ctrl-c').disabled = closed;
+      keys('tab').disabled = keys('sudo').disabled = busy || closed || ai;
+      keys('sudo').textContent = root ? 'Sair do sudo' : 'sudo -i';
+      $('#ssh-send').disabled = (closed && !ai) || (ai && sh.aiBusy);
+      $('#ssh-chat').classList.toggle('busy', busy);
+    },
+    // --- envio ----------------------------------------------------------------------------
+    async onSubmit(e) {
+      const f = e.target;
+      const sh = sshView.st();
+      if (f.id === 'ssh-enable' || f.id === 'ssh-unlock') {
+        e.preventDefault();
+        const code = $('#ssh-code').value.replace(/\D/g, '');
+        if (code.length !== 6) { toast('Digite os 6 números do app.'); return; }
+        const btn = $('button[type=submit]', f);
+        btn.disabled = true;
+        try {
+          await api(f.id === 'ssh-enable' ? '/api/ssh/enable' : '/api/ssh/unlock', { method: 'POST', body: JSON.stringify({ code }) });
+          sh.sid = ''; sh.ver = -1; sh.lastId = 0;
+          sshView.load();
+        } catch (err) {
+          if (err.message === 'login') return;
+          btn.disabled = false;
+          toast(err.message);
+          $('#ssh-code').select();
+        }
+        return;
+      }
+      if (f.id === 'ssh-target') {
+        e.preventDefault();
+        try {
+          await api('/api/ssh/target', { method: 'POST', body: JSON.stringify({ user: $('#ssh-t-user').value.trim(), host: $('#ssh-t-host').value.trim(), port: +$('#ssh-t-port').value }) });
+          toast('Salvo. O comando do passo 1 mudou: rode de novo no servidor.');
+          sshView.load();
+        } catch (err) { if (err.message !== 'login') toast(err.message); }
+        return;
+      }
+      if (f.id !== 'ssh-form') return;
+      e.preventDefault();
+      const ta = $('#ssh-in'), pw = $('#ssh-pw');
+      if (!pw.hidden) {
+        const v = pw.value;
+        pw.value = '';
+        sh.pw = false;
+        sh.pwDismiss = sshView.lastBlock() ? sshView.lastBlock().to : 0;
+        sshView.inputs();
+        sshView.send({ text: v, secret: true });
+        $('#ssh-in').focus();
+        return;
+      }
+      const text = ta.value;
+      if (sh.mode === 'ai') {
+        if (!text.trim() || sh.aiBusy) return;
+        ta.value = '';
+        sshView.grow();
+        sshView.askAI(text.trim());
+        return;
+      }
+      if (sshView.busy()) {
+        ta.value = '';
+        sshView.grow();
+        sshView.send({ text });
+        return;
+      }
+      if (!text.trim()) return;
+      if (await sshView.run(text)) { ta.value = ''; sshView.grow(); sshView.hideSugg(); }
+    },
+    async run(cmd) {
+      const sh = sshView.st();
+      if (sshView.busy()) { toast('Ainda há um comando rodando: espere ou use Ctrl+C.'); return false; }
+      const m = cmd.match(SSH_FULL);
+      if (m) {
+        const ok = await confirmDialog({
+          title: `${m[2]} não funciona no chat`, ok: 'Rodar mesmo assim',
+          body: `<p>Programas de tela cheia precisam de um terminal de verdade; aqui eles ficam esperando ou mostram lixo. Se travar, use <b>Ctrl+C</b>.</p>
+            <p>No lugar: <code>${esc(SSH_ALT[m[2]] || '—')}</code></p>`,
+        });
+        if (!ok) return false;
+      }
+      try {
+        await api('/api/ssh/run', { method: 'POST', body: JSON.stringify({ cmd }) });
+        const c = cmd.trim();
+        sh.hist = sh.hist.filter((x) => x !== c);
+        sh.hist.push(c);
+        sh.hi = -1;
+        return true;
+      } catch (e) {
+        sshView.err(e);
+        return false;
+      }
+    },
+    async send(body) {
+      try { await api('/api/ssh/input', { method: 'POST', body: JSON.stringify(body) }); } catch (e) { sshView.err(e); }
+    },
+    err(e) {
+      if (e.message === 'login') return;
+      if (e.code === 'ssh_locked' || e.code === 'ssh_disabled' || e.code === 'ssh_2fa_required') { toast(e.message); sshView.load(); return; }
+      toast(e.message);
+    },
+    // --- teclado e teclas da tela -----------------------------------------------------------------
+    onKey(e) {
+      const sh = sshView.st();
+      const ta = e.target;
+      const open = !$('#ssh-sugg').hidden && sh.sugg.length;
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        if (open && sh.sel >= 0) { sshView.pick(sh.sel); return; }
+        $('#ssh-form').requestSubmit();
+      } else if (e.key === 'Tab' && !e.shiftKey && sh.mode !== 'ai') {
+        e.preventDefault();
+        if (!sshView.busy()) sshView.complete();
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        const up = e.key === 'ArrowUp';
+        if (open) {
+          e.preventDefault();
+          const n = sh.sugg.length;
+          sh.sel = up ? (sh.sel <= 0 ? n - 1 : sh.sel - 1) : (sh.sel >= n - 1 ? 0 : sh.sel + 1);
+          sshView.drawSugg();
+          return;
+        }
+        const before = ta.value.slice(0, ta.selectionStart), after = ta.value.slice(ta.selectionEnd);
+        if ((up && !before.includes('\n')) || (!up && !after.includes('\n'))) { e.preventDefault(); sshView.histMove(up); }
+      } else if (e.key === 'Escape') {
+        if (open) { e.preventDefault(); sshView.hideSugg(); }
+      } else if (e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'c' || e.key === 'C') && ta.selectionStart === ta.selectionEnd) {
+        e.preventDefault();
+        if (sshView.busy()) sshView.send({ key: 'ctrl-c' });
+        else { ta.value = ''; sshView.grow(); sshView.hideSugg(); }
+      } else if (e.ctrlKey && (e.key === 'd' || e.key === 'D') && sshView.busy()) {
+        e.preventDefault();
+        sshView.send({ key: 'ctrl-d' });
+      } else if (e.ctrlKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        sshView.clear();
+      }
+    },
+    histMove(up) {
+      const sh = sshView.st();
+      const ta = $('#ssh-in');
+      if (!sh.hist.length) return;
+      if (up) {
+        if (sh.hi === -1) { sh.draft = ta.value; sh.hi = sh.hist.length - 1; } else sh.hi = Math.max(0, sh.hi - 1);
+        ta.value = sh.hist[sh.hi];
+      } else {
+        if (sh.hi === -1) return;
+        sh.hi++;
+        if (sh.hi >= sh.hist.length) { sh.hi = -1; ta.value = sh.draft; } else ta.value = sh.hist[sh.hi];
+      }
+      sshView.grow();
+      sshView.hideSugg();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    },
+    clear() {
+      const sh = sshView.st();
+      sh.items = [];
+      sshView.paint();
+    },
+    async key(k) {
+      const sh = sshView.st();
+      const ta = $('#ssh-in');
+      switch (k) {
+        case 'ctrl-c': if (sshView.busy()) sshView.send({ key: 'ctrl-c' }); else { ta.value = ''; sshView.grow(); } break;
+        case 'ctrl-d': sshView.send({ key: 'ctrl-d' }); break;
+        case 'esc': sshView.send({ key: 'esc' }); break;
+        case 'tab': await sshView.complete(); break;
+        case 'up': sshView.histMove(true); break;
+        case 'down': sshView.histMove(false); break;
+        case 'pw': sh.pw = !sh.pw; if (!sh.pw) sh.pwDismiss = sshView.lastBlock() ? sshView.lastBlock().to : 0; sshView.inputs(); break;
+        case 'sudo': sshView.run(sshView.root() ? 'exit' : 'sudo -i'); break;
+        case 'clear': sshView.clear(); break;
+        case 'mode': sh.mode = sh.mode === 'ai' ? 'cmd' : 'ai'; sshView.hideSugg(); sshView.inputs(); break;
+        default: break;
+      }
+      if (k !== 'pw' && ta && !ta.hidden) ta.focus();
+    },
+    // --- autocompletar --------------------------------------------------------------------------
+    containers() {
+      try { return [...new Set(appsOf().flatMap((a) => a.units).filter((u) => u.container).map((u) => u.container.name))].sort(); } catch { return []; }
+    },
+    suggest() {
+      const sh = sshView.st();
+      const q = $('#ssh-in').value;
+      if (sh.mode === 'ai' || sshView.busy() || !q.trim() || q.includes('\n')) { sshView.hideSugg(); return; }
+      const seen = new Set();
+      const out = [];
+      for (let i = sh.hist.length - 1; i >= 0 && out.length < 5; i--) {
+        const h = sh.hist[i];
+        if (h !== q && h.startsWith(q) && !seen.has(h)) { seen.add(h); out.push({ text: h, line: true, hint: 'já usado' }); }
+      }
+      for (const [c, d] of SSH_COMMON) {
+        if (out.length >= 8) break;
+        if (c !== q && c.startsWith(q) && !seen.has(c)) { seen.add(c); out.push({ text: c, line: true, hint: d }); }
+      }
+      sh.sugg = out;
+      sh.sel = -1;
+      sshView.drawSugg();
+    },
+    drawSugg() {
+      const sh = sshView.st();
+      const box = $('#ssh-sugg');
+      if (!box) return;
+      if (!sh.sugg.length) { box.hidden = true; return; }
+      box.hidden = false;
+      box.innerHTML = sh.sugg.map((s, i) => `<button type="button" role="option" class="sg${i === sh.sel ? ' sel' : ''}" aria-selected="${i === sh.sel}" data-sa="pick" data-i="${i}">
+        <code>${esc(s.text)}</code>${s.hint ? `<small>${esc(s.hint)}</small>` : ''}</button>`).join('');
+      const sel = $('.sg.sel', box);
+      if (sel) sel.scrollIntoView({ block: 'nearest' });
+    },
+    hideSugg() {
+      const sh = sshView.st();
+      sh.sugg = [];
+      sh.sel = -1;
+      const box = $('#ssh-sugg');
+      if (box) box.hidden = true;
+    },
+    pick(i) {
+      const sh = sshView.st();
+      const s = sh.sugg[i];
+      const ta = $('#ssh-in');
+      if (!s || !ta) return;
+      if (s.line) ta.value = s.text;
+      else {
+        const pos = ta.selectionStart;
+        ta.value = sh.wordHead + s.text + (s.text.endsWith('/') ? '' : ' ') + ta.value.slice(pos);
+      }
+      sshView.hideSugg();
+      sshView.grow();
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    },
+    async complete() {
+      const sh = sshView.st();
+      const ta = $('#ssh-in');
+      const pos = ta.selectionStart;
+      const before = ta.value.slice(0, pos);
+      const word = before.match(/(\S*)$/)[1];
+      const head = before.slice(0, before.length - word.length);
+      const first = !head.trim() || /(\||&&|;|\$\(|\bsudo)\s*$/.test(head);
+      let items = [];
+      if (!first && !word.startsWith('-') && /\bdocker\s+(logs|restart|stop|start|exec|inspect|stats|top|kill|rm|pause|unpause|port|cp)\b/.test(head)) {
+        items = sshView.containers().filter((n) => n.startsWith(word));
+      }
+      if (!items.length) {
+        try { items = (await api(`/api/ssh/complete?m=${first ? 'cmd' : 'file'}&w=${encodeURIComponent(word)}`)).items; } catch (e) { sshView.err(e); return; }
+      }
+      if (!items.length) { toast('Nada para completar.'); return; }
+      const apply = (rep) => {
+        ta.value = head + rep + ta.value.slice(pos);
+        const c = (head + rep).length;
+        ta.setSelectionRange(c, c);
+        sshView.grow();
+      };
+      if (items.length === 1) { apply(items[0] + (items[0].endsWith('/') ? '' : ' ')); sshView.hideSugg(); return; }
+      let cp = items[0];
+      for (const x of items) while (!x.startsWith(cp)) cp = cp.slice(0, -1);
+      if (cp.length > word.length) apply(cp);
+      sh.wordHead = head;
+      sh.sugg = items.slice(0, 60).map((x) => ({ text: x }));
+      sh.sel = -1;
+      sshView.drawSugg();
+    },
+    // --- IA ---------------------------------------------------------------------------------------
+    async askAI(q, explainKey) {
+      const sh = sshView.st();
+      if (sh.aiBusy) return;
+      const history = sh.items.filter((x) => x.kind === 'a' && x.content && !x.error).slice(-5)
+        .flatMap((x) => [{ role: 'user', content: x.q }, { role: 'assistant', content: x.content }]);
+      history.push({ role: 'user', content: q });
+      const m = { k: 'a' + sh.n++, kind: 'a', q, content: '', streaming: true, dirty: true };
+      sh.items.push(m);
+      sh.aiBusy = true;
+      sh.abort = new AbortController();
+      sshView.paint();
+      sshView.inputs();
+      let raf = 0;
+      const repaint = () => { m.dirty = true; if (!raf) raf = requestAnimationFrame(() => { raf = 0; sshView.paint(); }); };
+      const t0 = Date.now();
+      const explain = explainKey ? +(explainKey.split(':')[1] || 0) : 0;
+      try {
+        const r = await fetch('/api/ssh/ai', {
+          method: 'POST', credentials: 'same-origin', signal: sh.abort.signal,
+          headers: { 'X-Requested-With': 'vpmon', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: history, explain }),
+        });
+        if (r.status === 401) { showLogin(); return; }
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          const err = new Error((j.error && j.error.message) || `Erro ${r.status}`);
+          err.code = j.error && j.error.code;
+          throw err;
+        }
+        await readSSE(r, (ev, d) => {
+          if (ev === 'delta') m.content += d.text;
+          else if (ev === 'error') m.error = d.message;
+          else if (ev === 'done') {
+            const u = d.usage || {};
+            m.meta = `${d.model} · ${num(((u.prompt_tokens || 0) + (u.completion_tokens || 0)) / 1000, 1)} mil tokens · ${num((Date.now() - t0) / 1000, 0)} s`;
+          }
+          repaint();
+        });
+      } catch (e) {
+        if (e.name === 'AbortError') m.error = m.content ? '' : 'Pergunta cancelada.';
+        else m.error = e.message;
+      } finally {
+        m.streaming = false;
+        if (!m.content && !m.error) m.error = 'A IA não respondeu nada. Tente de novo.';
+        sh.aiBusy = false;
+        sh.abort = null;
+        m.dirty = true;
+        sshView.paint();
+        sshView.inputs();
+      }
+    },
+    // --- cliques ----------------------------------------------------------------------------------
+    async onClick(e) {
+      const sh = sshView.st();
+      const k = e.target.closest('[data-k]');
+      if (k && !k.disabled) { sshView.key(k.dataset.k); return; }
+      const a = e.target.closest('[data-sa]');
+      if (!a) return;
+      const block = () => sh.blocks.get(a.dataset.key);
+      switch (a.dataset.sa) {
+        case 'probe': sshView.probe(true); break;
+        case 'newkey': {
+          const ok = await confirmDialog({ title: 'Gerar outra chave do painel?', ok: 'Gerar', danger: true,
+            body: '<p>A chave atual deixa de ser usada e o comando do passo 1 muda: rode o novo no servidor (ele troca a linha antiga do <code>authorized_keys</code>).</p>' });
+          if (!ok) return;
+          try { await api('/api/ssh/newkey', { method: 'POST', body: JSON.stringify({ confirm: true }) }); toast('Chave nova gerada.'); sshView.load(); } catch (err) { sshView.err(err); }
+          break;
+        }
+        case 'disable': {
+          const v = S.shInfo.ssh;
+          const ok = await confirmDialog({ title: 'Desligar o SSH?', ok: 'Desligar', danger: true,
+            body: `<ul class="cf-list"><li>As sessões abertas fecham na hora (um comando rodando é interrompido).</li>
+              <li>Para religar basta o código do 2FA: a chave do painel continua autorizada no servidor.</li>
+              <li>Para cortar o acesso de vez, rode no servidor: <code>${esc(v.revoke)}</code></li></ul>` });
+          if (!ok) return;
+          try { await api('/api/ssh/disable', { method: 'POST', body: JSON.stringify({ confirm: true }) }); sshView.stop(); toast('SSH desligado.'); sshView.load(); } catch (err) { sshView.err(err); }
+          break;
+        }
+        case 'end': {
+          if (sshView.busy()) {
+            const ok = await confirmDialog({ title: 'Encerrar a sessão?', ok: 'Encerrar', danger: true, body: '<p>Há um comando rodando: ele é interrompido. Abrir de novo pede o código do app.</p>' });
+            if (!ok) return;
+          }
+          try { await api('/api/ssh/lock', { method: 'POST', body: '{}' }); } catch (err) { if (err.message === 'login') return; }
+          sshView.stop();
+          sh.items = []; sh.sid = ''; sh.ver = -1; sh.lastId = 0; sh.blocks = new Map(); sh.state = null;
+          sshView.load();
+          break;
+        }
+        case 'reopen':
+          try {
+            await api('/api/ssh/open', { method: 'POST', body: '{}' });
+            sh.state = null;
+            sshView.poll();
+            sshView.inputs();
+          } catch (err) { sshView.err(err); }
+          break;
+        case 'log': sshView.showLog(); break;
+        case 'wrap':
+          sh.wrap = !sh.wrap;
+          store.set('ssh-wrap', sh.wrap);
+          a.setAttribute('aria-pressed', sh.wrap);
+          $('#ssh-chat').classList.toggle('wrap', sh.wrap);
+          break;
+        case 'copy': {
+          const b = block();
+          if (b) navigator.clipboard.writeText(plainOut(b.out)).then(() => toast('Saída copiada.'), () => toast('Não consegui copiar.'));
+          break;
+        }
+        case 'again': { const b = block(); if (b) sshView.run(b.cmd); break; }
+        case 'explain': {
+          const b = block();
+          if (b) sshView.askAI(`Explique a saída do comando \`${b.cmd.slice(0, 300)}\`${b.code ? ` (saiu com código ${b.code})` : ''} e diga se há algo errado e o que fazer.`, a.dataset.key);
+          break;
+        }
+        case 'run-ai': sshView.run(a.parentElement.dataset.cmd); break;
+        case 'edit-ai':
+        case 'fill': {
+          const ta = $('#ssh-in');
+          sh.mode = 'cmd';
+          sshView.inputs();
+          ta.value = a.dataset.cmd || a.parentElement.dataset.cmd;
+          sshView.grow();
+          ta.focus();
+          break;
+        }
+        case 'pick': sshView.pick(+a.dataset.i); break;
+        default: break;
+      }
+    },
+    async showLog() {
+      let entries;
+      try { entries = (await api('/api/ssh/log')).entries; } catch (e) { sshView.err(e); return; }
+      const kind = { enable: ['ok', 'SSH ligado'], disable: ['off', 'SSH desligado'], open: ['info', 'sessão aberta'], close: ['off', 'sessão fechada'],
+        fail: ['crit', 'código errado'], cmd: ['', 'comando'], input: ['', 'entrada'] };
+      const rows = entries.map((x) => {
+        const [lvl, label] = kind[x.kind] || ['', x.kind];
+        const code = x.kind === 'cmd' ? (x.code == null ? '<span class="muted">—</span>' : x.code === 0 ? '<span class="sb-st ok">0</span>' : `<span class="sb-st bad">${x.code}</span>`) : '';
+        return `<tr><td class="nowrap">${dt(x.t)}</td><td>${esc(x.by)}</td><td>${lvl ? badge(lvl, label) : `<span class="muted">${label}</span>`}</td>
+          <td class="mono ssh-log-t">${x.uid === 0 ? '# ' : x.kind === 'cmd' ? '$ ' : ''}${esc(x.text || '')}</td><td>${code}</td><td class="muted nowrap">${esc(x.ip || '')}</td></tr>`;
+      }).join('');
+      const scrim = document.createElement('div');
+      scrim.className = 'cf-scrim';
+      const m = document.createElement('div');
+      m.className = 'cf-modal';
+      m.innerHTML = `<div class="card cf-card ssh-logcard" role="dialog" aria-modal="true" aria-labelledby="ssh-log-t">
+        <div class="card-h"><h2 id="ssh-log-t">${icon('logs')}Registro do SSH</h2><button class="icon-btn" type="button" data-close aria-label="Fechar">${icon('x')}</button></div>
+        <p class="muted">Quem ligou, abriu sessão e cada comando com o código de saída (a saída não fica; senhas viram "(senha)"). Os ${entries.length} mais novos.</p>
+        ${entries.length ? `<div class="table-wrap"><table><thead><tr><th>Quando</th><th>Quem</th><th>O quê</th><th>Comando</th><th>Saída</th><th>IP</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty">Nada registrado ainda.</div>'}</div>`;
+      document.body.append(scrim, m);
+      const close = () => { scrim.remove(); m.remove(); window.removeEventListener('keydown', onKey, true); };
+      const onKey = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); } };
+      window.addEventListener('keydown', onKey, true);
+      scrim.addEventListener('click', close);
+      m.addEventListener('click', (ev) => { if (ev.target === m || ev.target.closest('[data-close]')) close(); });
+    },
+  };
+
+  const VIEWS = { overview, ssh: sshView, servers: serversView, cleanup: cleanupView, backups: backupsView, users: usersView, infos: infosView, ai: aiView, apps: appsView, traffic: trafficView, logs: logsView, system: systemView, limits: limitsView, notify: notifyView };
 
   // ------------------------------------------------------------------ eventos globais
   document.addEventListener('click', async (e) => {
