@@ -105,6 +105,7 @@
     db: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
     upload: '<path d="M12 21V9M7 14l5-5 5 5"/><path d="M5 3h14"/>',
     eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    eyeoff: '<path d="M17.9 17.9A10 10 0 0 1 12 20c-7 0-11-8-11-8a18.4 18.4 0 0 1 5.1-5.9"/><path d="M9.9 4.2A9 9 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.2 3.2"/><path d="m1 1 22 22"/><path d="M14.1 14.1a3 3 0 1 1-4.2-4.2"/>',
     layers: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
     link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
     ext: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
@@ -145,6 +146,28 @@
       .filter(([, v]) => v > 0).map(([l, v]) => `${l} ${bytes(v)}`).join(' · ');
   }
   const swatch = (color) => `<i class="swatch" style="background:${esc(color)}"></i>`;
+
+  // Chaves e tokens: escondidos por padrão, com o olhinho para ver.
+  const eyeBtn = (what) => `<button class="eye" type="button" data-eye aria-pressed="false" aria-label="Mostrar ${what}" title="Mostrar">${icon('eye')}</button>`;
+  const dots = (v) => '•'.repeat(Math.min(32, Math.max(12, String(v).length)));
+  // campo (tipo senha) com o olhinho; attrs vão como estão (já escapados por quem chama)
+  const secretInput = (attrs, what) => `<div class="secret-in"><input class="input" type="password" ${attrs}>${eyeBtn(what)}</div>`;
+  // segredo mostrado uma vez: pontinhos, olhinho para revelar; o Copiar copia sem revelar
+  const secretOut = (value, what) => `<span class="secret-out"><code class="pass" data-secret="${esc(value)}">${dots(value)}</code>${eyeBtn(what)}
+    <button class="btn sm" type="button" data-copy="${esc(value)}">Copiar</button></span>`;
+  function toggleEye(btn) {
+    const on = btn.getAttribute('aria-pressed') !== 'true';
+    const what = (btn.getAttribute('aria-label') || '').replace(/^(Mostrar|Esconder) /, '');
+    btn.setAttribute('aria-pressed', on);
+    btn.setAttribute('aria-label', `${on ? 'Esconder' : 'Mostrar'} ${what}`);
+    btn.title = on ? 'Esconder' : 'Mostrar';
+    btn.innerHTML = icon(on ? 'eyeoff' : 'eye');
+    const box = btn.parentElement;
+    const input = $('input', box);
+    if (input) input.type = on ? 'text' : 'password';
+    const out = $('[data-secret]', box);
+    if (out) out.textContent = on ? out.dataset.secret : dots(out.dataset.secret);
+  }
 
   // ------------------------------------------------------------------ versão (tela aberta há tempos x painel atualizado)
   const APP_VERSION = (document.querySelector('meta[name="vpmon-version"]') || {}).content || '';
@@ -1258,7 +1281,7 @@
       <p class="muted" style="margin:0;font-size:.84rem">A aba <b>IA</b> responde perguntas sobre o servidor usando a DeepSeek. Crie uma chave em
         <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer">platform.deepseek.com</a> → API keys.
         Ela fica só no servidor (nunca volta para o navegador) e é testada antes de salvar.</p>
-      <div class="field"><label for="ai-k">Chave da DeepSeek</label><input class="input" id="ai-k" type="password" placeholder="${v.source === 'panel' ? 'cole uma nova para trocar (vazio = manter)' : 'sk-...'}" spellcheck="false"></div>
+      <div class="field"><label for="ai-k">Chave da DeepSeek</label>${secretInput(`id="ai-k" placeholder="${v.source === 'panel' ? 'cole uma nova para trocar (vazio = manter)' : 'sk-...'}" spellcheck="false" autocomplete="off"`, 'a chave')}</div>
       <div class="field"><label for="ai-m">Modelo</label><select class="input" id="ai-m">${models.map(([m, l]) => `<option value="${esc(m)}"${m === (v.model || 'deepseek-chat') ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
       <div class="form-err" id="ai-err" role="alert"></div><div class="form-ok" id="ai-ok" role="status"></div>
       <div class="controls">
@@ -1454,7 +1477,7 @@
   }
   const readPerms = (root) => Object.fromEntries($$('[data-perm]', root).map((c) => [c.dataset.perm, c.checked]));
   const passBox = (name, pass) => `<div class="passbox" role="status"><div><b>Senha provisória de ${esc(name)}</b></div>
-    <div class="passline"><code class="pass">${esc(pass)}</code><button class="btn sm" type="button" data-copy="${esc(pass)}">Copiar</button></div>
+    <div class="passline">${secretOut(pass, 'a senha')}</div>
     <div class="muted">Passe só para essa pessoa. No primeiro acesso ela cria a própria senha (esta não aparece de novo).</div></div>`;
   function usersPanel(body) {
     const load = async (flash) => {
@@ -2520,7 +2543,7 @@
               Este painel passa a mandar um resumo por minuto (CPU, memória, disco, apps, alertas e banda). O central não consegue mexer em nada aqui.</p>
             <form class="stack" id="fl-connect" autocomplete="off">
               <div class="field"><label for="fl-url">Endereço do painel central</label><input class="input" id="fl-url" required placeholder="https://painel.exemplo.com" autocapitalize="off" spellcheck="false"></div>
-              <div class="field"><label for="fl-tok">Token</label><input class="input" id="fl-tok" required placeholder="vps_…" autocapitalize="off" spellcheck="false"></div>
+              <div class="field"><label for="fl-tok">Token</label>${secretInput('id="fl-tok" required placeholder="vps_…" autocapitalize="off" spellcheck="false" autocomplete="off"', 'o token')}</div>
               <div class="form-err" id="fl-cerr" role="alert"></div>
               <button class="btn primary" type="submit">${icon('link')}Conectar</button></form>`}
         </section></div>`;
@@ -2538,7 +2561,7 @@
             document.activeElement.blur();
             await serversView.load();
             serversView.secret = `<div class="passbox" role="status"><div><b>Token de ${esc(r.token.name)}</b></div>
-              <div class="passline"><code class="pass">${esc(r.secret)}</code><button class="btn sm" type="button" data-copy="${esc(r.secret)}">Copiar</button></div>
+              <div class="passline">${secretOut(r.secret, 'o token')}</div>
               <div class="muted">Copie agora: ele não aparece de novo. No painel de ${esc(r.token.name)}: Servidores → Conectar a um painel central,
                 com o endereço <code>${esc(location.origin)}</code> e este token.</div></div>`;
             serversView.render();
@@ -2891,8 +2914,8 @@
             <div class="field"><label for="bk-bucket">Bucket</label><input class="input" id="bk-bucket" required value="${esc(st.bucket)}" placeholder="meus-backups" spellcheck="false" autocapitalize="off"></div>
             <div class="field"><label for="bk-region">Região</label><input class="input" id="bk-region" value="${esc(st.region || 'auto')}" spellcheck="false" autocapitalize="off"></div>
           </div>
-          <div class="field"><label for="bk-ak">Access Key ID</label><input class="input" id="bk-ak" required value="${esc(st.accessKey)}" spellcheck="false" autocapitalize="off"></div>
-          <div class="field"><label for="bk-sk">Secret Access Key</label><input class="input" id="bk-sk" type="password" ${st.hasSecret ? 'placeholder="guardada (deixe vazio para manter)"' : 'required'} autocomplete="new-password"></div>
+          <div class="field"><label for="bk-ak">Access Key ID</label>${secretInput(`id="bk-ak" required value="${esc(st.accessKey)}" spellcheck="false" autocapitalize="off" autocomplete="off"`, 'a Access Key ID')}</div>
+          <div class="field"><label for="bk-sk">Secret Access Key</label>${secretInput(`id="bk-sk" ${st.hasSecret ? 'placeholder="guardada (deixe vazio para manter)"' : 'required'} autocomplete="new-password"`, 'a Secret Access Key')}</div>
           <div class="field"><label for="bk-prefix">Pasta no bucket</label><input class="input" id="bk-prefix" value="${esc(S.bk.prefix || 'vpserver')}" spellcheck="false" autocapitalize="off">
             <small class="muted">Os arquivos ficam em ${esc(S.bk.prefix || 'vpserver')}/${esc(S.bk.server)}/&lt;banco&gt;/: dá para vários servidores dividirem um bucket.</small></div>
           <div class="form-err" id="bk-st-err" role="alert"></div>
@@ -2921,9 +2944,8 @@
       return `<section class="card bk-priv" role="alert"><div class="card-h"><h2>${icon('warn')}Guarde a chave privada agora</h2></div>
         <p>Esta é a <b>única vez</b> que ela aparece: o servidor não guarda. <b>Sem ela, nenhum backup abre.</b> Guarde no gerenciador de senhas
           (ou num arquivo seguro, fora do servidor) e teste uma restauração.</p>
-        <div class="bk-key"><code>${esc(k)}</code></div>
-        <div class="controls"><button class="btn" type="button" data-copy="${esc(k)}">Copiar</button>
-          <button class="btn" type="button" data-bk="key-download">${icon('install')}Baixar chave.txt</button>
+        <div class="bk-key">${secretOut(k, 'a chave privada')}</div>
+        <div class="controls"><button class="btn" type="button" data-bk="key-download">${icon('install')}Baixar chave.txt</button>
           <button class="btn primary" type="button" data-bk="key-saved">Já guardei</button></div></section>`;
     },
     dbsHTML() {
@@ -3114,6 +3136,8 @@
 
   // ------------------------------------------------------------------ eventos globais
   document.addEventListener('click', async (e) => {
+    const eye = e.target.closest('[data-eye]');
+    if (eye) { toggleEye(eye); return; }
     const cp = e.target.closest('[data-copy]');
     if (cp) {
       try { await navigator.clipboard.writeText(cp.dataset.copy); toast('Copiado.'); } catch { toast('Não deu para copiar: selecione e copie à mão.'); }

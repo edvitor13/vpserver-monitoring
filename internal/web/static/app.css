@@ -763,3 +763,12 @@ a.btn { text-decoration: none; color: inherit; }
 .bk-restore { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 10px; font-size: .84rem; }
 .bk-restore pre { margin: 0; padding: 8px 10px; background: var(--surface-2); border-radius: var(--radius-sm); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .78rem; }
 @media (max-width: 520px) { .bk-two { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------- chaves e tokens escondidos (olhinho) ---------- */
+.secret-in { position: relative; display: flex; min-width: 0; }
+.secret-in .input { flex: 1; min-width: 0; padding-right: 44px; }
+.secret-in .eye { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); }
+.eye { background: none; border: 0; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); cursor: pointer; flex: none; }
+.eye:hover, .eye:focus-visible, .eye[aria-pressed="true"] { color: var(--text); background: var(--surface-2); outline: none; }
+.secret-out { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; flex: 1; }
+.secret-out code { flex: 1; min-width: 0; overflow-wrap: anywhere; }
