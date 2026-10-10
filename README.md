@@ -46,6 +46,7 @@ aplicações (cada projeto do Docker Compose vira uma app).
 - [Pausar e retomar uma aplicação](#pausar-e-retomar-uma-aplicação)
 - [Limpeza do disco](#limpeza-do-disco)
 - [Backups dos bancos](#backups-dos-bancos)
+- [SSH pela tela](#ssh-pela-tela)
 - [Usuários e permissões](#usuários-e-permissões)
 - [Verificação em duas etapas](#verificação-em-duas-etapas)
 - [No celular](#no-celular)
@@ -517,6 +518,76 @@ comando só como a variável `VPMON_DB`, nunca como texto do comando.
 
 ---
 
+## SSH pela tela
+
+A aba **SSH** (só administradores) roda comandos no servidor por um **chat**: cada mensagem é
+um comando, a saída chega aos pedaços, e a pasta, as variáveis e o modo sudo continuam de um
+comando para o outro. Pensado para o celular: os botões **Ctrl+C**, **Ctrl+D**, **Tab**,
+**↑ ↓** (comandos anteriores), **Esc**, **Senha** e **sudo -i** ficam numa barra acima do
+campo. **Desligado por padrão.**
+
+**Quem usa:** só administradores com a [verificação em duas etapas](#verificação-em-duas-etapas)
+ligada. Ligar e abrir a sessão pedem o **código do app** de novo (código de recuperação não
+vale aqui). A sessão vale naquele navegador e fecha depois de **30 min parada** (um comando
+rodando conta como uso; no máximo 12 h). **Encerrar** fecha na hora e volta a pedir o código.
+
+**Como entra no servidor:** SSH de verdade, do contêiner do painel para o próprio servidor
+(`host.docker.internal`, porta 22), com uma **chave própria do painel** (ed25519, guardada só
+em `/data/ssh.json`, 600) num **usuário próprio** (padrão `vpserver-ssh`), que vira root com
+`sudo` e a senha dele. A chave do servidor vista ao ligar passa a ser a única aceita.
+
+**Ligar (uma vez por servidor):**
+
+1. A aba mostra um comando para rodar no servidor (pelo seu SSH de sempre). Ele cria o
+   usuário, põe no grupo do sudo, autoriza a chave do painel no `authorized_keys` **só vinda
+   da rede do contêiner** (`from="…"`, com `restrict,pty`: sem redirecionar porta, agente ou
+   X11) e pede a senha do sudo.
+2. **Verificar** entra com a chave e confere o grupo do sudo. Ao abrir a tela, o painel só
+   confere se o SSH responde, sem tentar entrar (abrir a aba várias vezes antes do passo 1
+   não vira tentativa de login falha, nem conta no fail2ban).
+3. O código do app liga o SSH e abre o chat.
+
+**O chat:**
+
+- **Autocompletar:** enquanto digita, comandos já usados e uma lista dos comuns (com o que
+  cada um faz); **Tab** completa comandos, arquivos e pastas do servidor (e nomes de
+  contêiner depois de `docker logs`, `restart`...).
+- **Senha:** quando um programa pede senha (`sudo`, `su`...), o campo vira um campo
+  escondido. A senha vai para o programa e não aparece na tela nem no registro.
+- **Programa rodando:** o que você manda vira entrada dele (ex.: `cat`, `psql`, `mysql`);
+  **Ctrl+C** interrompe, **Ctrl+D** fecha a entrada.
+- **Modo sudo:** `sudo -i` (ou `sudo su`, `su -`) vira o shell do chat como root; o cabeçalho
+  fica vermelho e o botão vira **Sair do sudo**.
+- **Não funciona:** programas de tela cheia (`vim`, `nano`, `top`, `htop`, `less`, `watch`).
+  A tela avisa antes e sugere a alternativa (`sed -i`, `top -bn1`, `tail -n`). Os
+  paginadores já vêm desligados (`PAGER=cat`) e o terminal é `dumb`.
+- Saída grande: a tela guarda o fim (64 KB por comando); **Quebrar linhas** liga e desliga a
+  quebra das linhas longas.
+
+**IA no chat:** o botão **$ / IA** troca o campo para perguntas à IA já configurada
+(Configurações → IA). Ela vê a pasta atual e os últimos comandos com a saída, **com senhas,
+tokens, variáveis como `DB_PASSWORD=` e chaves privadas mascarados**, sugere comandos (cada
+um com **Rodar** e **Editar**) e avisa antes dos que apagam, reiniciam ou mudam configuração.
+**Explicar**, em cada comando, pergunta o que aquela saída quer dizer. A IA nunca roda nada
+sozinha.
+
+**Registro** (botão no chat): quem ligou, desligou, abriu sessão, errou o código, e cada
+comando com o código de saída e o IP, em `/data/ssh-log.jsonl` (600, até 2 MB + 1 antigo). A
+**saída não fica**, e senha digitada no campo de senha vira `(senha)`. Comando digitado com
+senha no meio (`mysql -pSENHA`) fica como foi digitado: use o campo de senha.
+
+**Desligar** (no rodapé do chat ou da tela de código) fecha as sessões na hora. A chave do
+painel continua autorizada no servidor (para religar basta o código); para cortar de vez:
+
+```bash
+sudo sed -i '/ vpserver-monitoring$/d' ~vpserver-ssh/.ssh/authorized_keys   # tira a chave
+sudo userdel -r vpserver-ssh                                                # ou apaga o usuário
+```
+
+O WhatsApp (tipo **Segurança do painel**) avisa quando alguém liga, desliga ou abre uma
+sessão. Nada do SSH vai pelo [painel central](#vários-servidores): para usar o SSH de outro
+servidor, abra o painel dele.
+
 ## Usuários e permissões
 
 Dá para cadastrar **outras pessoas**, cada uma com o próprio login. O **primeiro
@@ -932,6 +1003,13 @@ requisição; requisição sem resposta cai em 100 s.
   trocar a chave pedem confirmação; os arquivos saem cifrados com `age` e o servidor só
   tem a chave pública; o segredo do bucket fica em `/data/backup.json` (600) e nunca volta
   para a tela; o download entrega o arquivo ainda cifrado e só dos backups deste servidor.
+- **SSH pela tela:** desligado por padrão; só administradores com 2FA, e ligar ou abrir a
+  sessão pede o código do app de novo (sessão por navegador, fecha com 30 min parada). Entra
+  por SSH num usuário próprio com chave do painel (só vinda da rede do contêiner, sem
+  redirecionamentos) e chave do servidor fixada ao ligar. Cada comando fica no registro;
+  senhas nunca. Com o painel comprometido **e** a sessão aberta, daria para rodar comandos no
+  servidor (e como root com a senha do sudo): por isso o código a cada sessão e o aviso no
+  WhatsApp. Não passa pelo painel central. Ver [SSH pela tela](#ssh-pela-tela).
 - **Limpeza:** exige a permissão **Limpar o disco**, confirmação na tela (`confirm: true`
   na API), uma por vez, e fica no histórico e no WhatsApp. O `vpserver-cleaner` tem acesso
   de escrita à pasta dos contêineres, por isso não tem rede nem entrada além dos IDs
@@ -1107,7 +1185,9 @@ go run ./cmd/vpmon     # http://localhost:8080
 binário (`go:embed`). Sem build de front. Gráficos com
 [uPlot](https://github.com/leeoniya/uPlot) (MIT, ~50 KB) e o QR code do 2FA com
 [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (MIT, carregado só na
-ativação), os dois guardados no repo.
+ativação), os dois guardados no repo. No Go, a cifra dos backups e o cliente SSH vêm de uma
+cópia do [`golang.org/x/crypto`](https://pkg.go.dev/golang.org/x/crypto) (BSD) em
+`internal/xcrypto`, para o `go.mod` seguir sem dependências.
 Cores sempre por variável CSS (`--s1`…`--s8` para séries, `--good`/`--warning`/
 `--critical` para estado), redefinidas no tema escuro. A paleta de séries é
 validada para daltonismo nos dois temas. Status sempre com ícone + texto.
@@ -1150,7 +1230,8 @@ internal/cleanup/     limpeza do disco: cache de build, imagens sem nome, logs (
 internal/backup/      backups dos bancos: reconhece, faz o dump (exec), cifra, envia, agenda, retenção, avisos
 internal/age/         cifra no formato age v1 (X25519), compatível com a ferramenta oficial
 internal/s3/          cliente S3/R2 só com a biblioteca padrão (assinatura v4, envio em partes)
-internal/xcrypto/     ChaCha20-Poly1305 genérico copiado do golang.org/x/crypto (BSD); não editar à mão
+internal/sshchat/     SSH pela tela: chave do painel, conexão, shell do chat (marcadores), registro
+internal/xcrypto/     cópia do golang.org/x/crypto (BSD): ChaCha20-Poly1305, SSH; não editar à mão
 internal/web/         HTTP, login, troca de senha, chat (SSE), arquivos estáticos (static/)
 deploy/               compose.yml, env.example, receive.sh e on-server.sh (rodam no servidor)
 scripts/server.py     setup, deploy, logs, restart, rollback, password, ci-key

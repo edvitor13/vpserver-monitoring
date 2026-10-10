@@ -54,8 +54,8 @@ mesma entrega quando são do mesmo assunto; assunto novo ganha issue própria.
 - **Go 1.23 só com a biblioteca padrão** (o `go.mod` não tem dependências).
   Front em **HTML/CSS/JS puros**, sem build, embutidos no binário
   (`internal/web/static`). Biblioteca de terceiros só embutida no repositório,
-  com licença permissiva (MIT, BSD, Apache), e citada no README (hoje: uPlot e
-  qrcode-generator).
+  com licença permissiva (MIT, BSD, Apache), e citada no README (hoje: uPlot,
+  qrcode-generator e a cópia do `golang.org/x/crypto` em `internal/xcrypto`).
 - **Permissões** valem na API (`need(...)` em `server.go`), não só na tela:
   administrador pode tudo; "ações" pausa/retoma; "usuários" gerencia
   não-administradores. Toda rota nova declara quem pode chamar.
@@ -109,9 +109,20 @@ mesma entrega quando são do mesmo assunto; assunto novo ganha issue própria.
   (`internal/age`, `TestOfficialAgeInterop`). `internal/xcrypto` é cópia: não
   edite à mão. Nunca rode backup em servidor de verdade para testar: use o
   Docker e o bucket falsos.
+- **SSH pela tela** (`internal/sshchat`, `web/ssh.go`): desligado por padrão e
+  ligar é decisão do dono, no servidor dele (decisão de 10/10/2026: usuário
+  próprio que vira root com `sudo` e a senha; ligar pela tela; código do 2FA para
+  ligar e para abrir cada sessão). Só administradores com 2FA; código de
+  recuperação não abre SSH; erro de código é 400 (401 derruba o login da tela).
+  A senha digitada no campo de senha nunca vai para o registro nem para a IA; o
+  que vai para a IA passa pelo `monitor.Redact`. Abrir a tela de ativação não
+  tenta login (só a troca de chaves): login de teste só no botão Verificar. A IA
+  **nunca liga o SSH nem roda comandos por ele em servidor de verdade** para
+  testar: use o servidor falso (`sshchat/sshtest`), o `TestRealSSHD` (OpenSSH de
+  verdade, sem root) e contêineres descartáveis com OpenSSH.
 - **Ver/controlar à distância:** só com o que o dono do servidor conectado liberou
   (ver, logs, controle total), na lista fechada `RemotePaths`/`RemoteWrites`
-  conferida nos dois lados. Usuários, senhas/2FA, IA, WhatsApp e a conexão
+  conferida nos dois lados. Usuários, senhas/2FA, IA, WhatsApp, SSH e a conexão
   **nunca** entram nessa lista.
 
 ## Comandos
