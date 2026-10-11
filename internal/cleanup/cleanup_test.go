@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/edvitor13/vpserver-monitoring/internal/docker"
+	"github.com/edvitor13/vpserver-monitoring/internal/i18n"
 	"github.com/edvitor13/vpserver-monitoring/internal/monitor"
 )
 
@@ -224,6 +225,43 @@ func TestAutoCleanup(t *testing.T) {
 	v := s.View()
 	if len(v.Runs) != 2 || v.Runs[0].Note == "" || len(dk.calls) != 2 || len(*msgs) != 1 {
 		t.Fatalf("nada a limpar: registra sem chamar o Docker nem avisar (%+v %v %v)", v.Runs[0], dk.calls, *msgs)
+	}
+}
+
+// O aviso pelo WhatsApp: o português de sempre e, traduzido linha por linha no
+// envio (i18n.Message), o inglês inteiro, com os números do inglês.
+func TestMessageInEnglish(t *testing.T) {
+	gb := float64(1 << 30)
+	manual := Run{By: "ana", Before: 84, After: 61, Freed: uint64(17.6*gb) + uint64(3.2*gb) + 2<<30, Steps: []Step{
+		{Item: "build_cache", Freed: uint64(17.6 * gb)},
+		{Item: "dangling", Removed: 11, Freed: uint64(3.2 * gb)},
+		{Item: "logs", Names: []string{"loja-api-1", "portal-app-1"}, Freed: 2 << 30},
+	}}
+	failed := Run{Before: 84, After: 84, Steps: []Step{
+		{Item: "build_cache", Error: "timeout"}, {Item: "dangling", Error: "timeout"}, {Item: "logs", Error: "timeout"},
+	}}
+	for _, c := range []struct {
+		run    Run
+		pt, en string
+	}{
+		{manual,
+			"🧹 *Limpeza do disco · srv*\nFeita por ana pela tela.\n• Cache de build: 17,6 GB\n• Imagens sem nome (11): 3,2 GB\n" +
+				"• Logs (loja-api-1, portal-app-1): 2,0 GB\nLiberado: *22,8 GB*. Disco: 84% → 61%.",
+			"🧹 *Disk cleanup · srv*\nDone by ana from the panel.\n• Build cache: 17.6 GB\n• Unnamed images (11): 3.2 GB\n" +
+				"• Logs (loja-api-1, portal-app-1): 2.0 GB\nFreed: *22.8 GB*. Disk: 84% → 61%."},
+		{failed,
+			"🧹 *Limpeza automática · srv*\nO disco passou do limite configurado (84%).\n• Cache de build: falhou (timeout)\n" +
+				"• Imagens sem nome: falhou (timeout)\n• Logs: falhou (timeout)\nLiberado: *0 B*. Disco: 84% → 84%.",
+			"🧹 *Automatic cleanup · srv*\nThe disk went over the configured limit (84%).\n• Build cache: failed (timeout)\n" +
+				"• Unnamed images: failed (timeout)\n• Logs: failed (timeout)\nFreed: *0 B*. Disk: 84% → 84%."},
+	} {
+		pt := Message("srv", c.run)
+		if pt != c.pt {
+			t.Errorf("português mudou:\n%s\nesperava\n%s", pt, c.pt)
+		}
+		if en := i18n.Message("en", pt); en != c.en {
+			t.Errorf("inglês:\n%s\nesperava\n%s", en, c.en)
+		}
 	}
 }
 

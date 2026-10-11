@@ -51,15 +51,19 @@ func Message(server string, r Run) string {
 	if r.Note != "" {
 		b.WriteString(r.Note + "\n")
 	}
+	// cada linha com texto fixo no próprio formato: o envio traduz linha por linha
+	// (i18n.Message); o "falhou (…)" é um formato à parte, que vale depois de qualquer item
 	for _, st := range r.Steps {
 		name := itemNames[st.Item]
 		switch {
 		case st.Error != "":
-			fmt.Fprintf(&b, "• %s: falhou (%s)\n", name, st.Error)
+			fmt.Fprintf(&b, "• %s: %s\n", name, fmt.Sprintf("falhou (%s)", st.Error))
 		case st.Item == "logs":
-			fmt.Fprintf(&b, "• %s (%s): %s\n", name, strings.Join(st.Names, ", "), Bytes(st.Freed))
+			fmt.Fprintf(&b, "• Logs (%s): %s\n", strings.Join(st.Names, ", "), Bytes(st.Freed))
 		case st.Item == "dangling":
-			fmt.Fprintf(&b, "• %s (%d): %s\n", name, st.Removed, Bytes(st.Freed))
+			fmt.Fprintf(&b, "• Imagens sem nome (%d): %s\n", st.Removed, Bytes(st.Freed))
+		case st.Item == "build_cache":
+			fmt.Fprintf(&b, "• Cache de build: %s\n", Bytes(st.Freed))
 		default:
 			fmt.Fprintf(&b, "• %s: %s\n", name, Bytes(st.Freed))
 		}

@@ -41,10 +41,14 @@ var (
 	skipTexts = regexp.MustCompile(`^(com\.docker\.|keepalive@|painel-central:|vpmon-usuario-|teste do VPServer: pode apagar|\$ %s)|\.vpserver-teste$|2>/dev/null`)
 	skipFuncs = map[string]bool{"setupScript": true, "revokeScript": true}
 	// arquivos em que só algumas declarações são tela: em monitor/ai.go, os rótulos das
-	// consultas (aiLabel e os nomes que ele usa); o resto vai para a IA. Nelas, todo texto com
-	// letras é de tela, mesmo sem acento ("CPU total", "swap"), menos as chaves dos mapas. O teste
-	// falha se uma delas sumir ou ficar sem texto (a lista apontava para Label, que só chama aiLabel)
-	onlyDecls = map[string]map[string]bool{"internal/monitor/ai.go": {"aiLabel": true, "fieldNames": true, "rangeLabel": true}}
+	// consultas (aiLabel e os nomes que ele usa; o resto vai para a IA); em cleanup/message.go,
+	// o aviso do WhatsApp. Nelas, todo texto com letras é de tela, mesmo sem acento ("CPU total",
+	// "• Logs (%s): %s"), menos as chaves dos mapas. O teste falha se uma delas sumir ou ficar sem
+	// texto (a lista apontava para Label, que só chama aiLabel)
+	onlyDecls = map[string]map[string]bool{
+		"internal/monitor/ai.go":      {"aiLabel": true, "fieldNames": true, "rangeLabel": true},
+		"internal/cleanup/message.go": {"Message": true, "itemNames": true, "title": true},
+	}
 	skipCalls = regexp.MustCompile(`^(slog\.|regexp\.|strings\.(Has|Contains|Trim|Index|Cut|Split|Replace|Count|EqualFold|Fields)|errors\.Is|filepath\.|os\.|http\.)`)
 	// argumentos que são código (chave, nível e área do alerta em add(chave, nível, área, título, detalhe, alvo))
 	codeArgs = map[string]int{"add": 3}

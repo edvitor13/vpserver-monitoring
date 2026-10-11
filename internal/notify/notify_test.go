@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/edvitor13/vpserver-monitoring/internal/ai"
+	"github.com/edvitor13/vpserver-monitoring/internal/cleanup"
 	"github.com/edvitor13/vpserver-monitoring/internal/docker"
 	"github.com/edvitor13/vpserver-monitoring/internal/i18n"
 	"github.com/edvitor13/vpserver-monitoring/internal/monitor"
@@ -499,6 +500,14 @@ func TestMessagesFollowLanguage(t *testing.T) {
 	for i := 0; i < 7; i++ {
 		s.Security("login_fail", "203.0.113.8", "")
 	}
+	// limpeza do disco (chega pelo Audit, como no painel)
+	gb := float64(1 << 30)
+	s.cfg.Events["cleanup"] = true
+	s.Audit("cleanup", "Limpeza do disco por ana", cleanup.Message("srv", cleanup.Run{By: "ana", Before: 84, After: 61,
+		Freed: uint64(17.6*gb) + uint64(3.2*gb) + 2<<30, Steps: []cleanup.Step{
+			{Item: "build_cache", Freed: uint64(17.6 * gb)},
+			{Item: "dangling", Removed: 11, Freed: uint64(3.2 * gb)},
+			{Item: "logs", Names: []string{"loja-api-1", "portal-app-1"}, Freed: 2 << 30}}}))
 	time.Sleep(150 * time.Millisecond)
 	if _, err := s.SendNow(ctx, "test"); err != nil {
 		t.Fatal(err)
@@ -521,7 +530,9 @@ func TestMessagesFollowLanguage(t *testing.T) {
 	}
 	for _, want := range []string{"🔴 *Urgent · srv*\n*loja-api-1 is unhealthy*", "The container's healthcheck is failing.",
 		"*Disk 93% full* _(got worse)_", "*2 alerts resolved · srv*", "• Disk 93% full _(lasted 9 min)_",
-		"*Loja* showed up on the server", "🚀 *Loja updated · srv*", "*Panel security*", "*VPServer test · srv*"} {
+		"*Loja* showed up on the server", "🚀 *Loja updated · srv*", "*Panel security*", "*VPServer test · srv*",
+		"🧹 *Disk cleanup · srv*\nDone by ana from the panel.\n• Build cache: 17.6 GB\n• Unnamed images (11): 3.2 GB\n" +
+			"• Logs (loja-api-1, portal-app-1): 2.0 GB\nFreed: *22.8 GB*. Disk: 84% → 61%."} {
 		if !strings.Contains(all, want) {
 			t.Errorf("faltou %q em:\n%s", want, all)
 		}
