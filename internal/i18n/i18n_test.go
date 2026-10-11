@@ -9,8 +9,10 @@ import (
 
 func testCatalog() {
 	Use("xx", File{
-		Exact: map[string]string{"Dados inválidos.": "Invalid data.", "Kernel e outros": "Kernel and other"},
+		Exact: map[string]string{"Dados inválidos.": "Invalid data.", "Kernel e outros": "Kernel and other",
+			"CPU total": "total CPU", "memória em uso": "memory in use", "Monitor (este painel)": "Monitor (this panel)"},
 		Formats: map[string]string{
+			"Histórico do servidor · %s · %s":     "Server history · %s · %s",
 			"Disco %.0f%% cheio":                  "Disk %.0f%% full",
 			"%s está unhealthy":                   "%s is unhealthy",
 			"%s caiu %d vezes em 24 h":            "%s went down %d times in 24 h",
@@ -42,8 +44,15 @@ func TestTr(t *testing.T) {
 		"🔐 *Segurança*\n*maria* entrou (IP 203.0.113.7).":        "🔐 *Security*\n*maria* signed in (IP 203.0.113.7).",
 		"3 dias · Kernel e outros":                               "3 days · Kernel and other", // lista com " · "
 		"blog: erro":                                             "blog: erro",                // "%s: %s" tem pouco texto fixo: não vale
-		"loja-api-1":                                             "loja-api-1",
-		"":                                                       "",
+		// lista com ", " dentro de um valor: item por item (o que não é conhecido fica)
+		"Histórico do servidor · CPU total, memória em uso · 24 h": "Server history · total CPU, memory in use · 24 h",
+		"Histórico do servidor · CPU total, swap · 7 dias":         "Server history · total CPU, swap · 7 days",
+		"CPU total, memória em uso":                                "CPU total, memória em uso", // fora de um valor, a vírgula é da frase
+		// "rótulo: itens": o rótulo conhecido é traduzido, os itens ficam
+		"Monitor (este painel): vpserver-cleaner, vpserver-dockerproxy": "Monitor (this panel): vpserver-cleaner, vpserver-dockerproxy",
+		"loja: loja-api-1, loja-web-1":                                  "loja: loja-api-1, loja-web-1",
+		"loja-api-1":                                                    "loja-api-1",
+		"":                                                              "",
 	}
 	for in, want := range cases {
 		if got := Tr("xx", in); got != want {

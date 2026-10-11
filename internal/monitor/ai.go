@@ -412,17 +412,19 @@ func (m *Monitor) aiLabel(name, raw string) string {
 	case "banda":
 		return "Banda por dia, mês e app"
 	case "logs":
-		s := "Logs de " + a.Conteiner
-		if a.Conteiner == "*" {
-			s = "Logs de todos os contêineres"
+		// partes juntas por " · ": a tradução reconhece cada uma
+		alvo := a.Conteiner
+		if alvo == "*" {
+			alvo = "todos os contêineres"
 		}
+		parts := []string{"Logs de " + alvo}
 		if a.SoErros {
-			s += " · só erros"
+			parts = append(parts, "só erros")
 		}
 		if a.Filtro != "" {
-			s += ` · "` + a.Filtro + `"`
+			parts = append(parts, `"`+a.Filtro+`"`)
 		}
-		return s
+		return strings.Join(parts, " · ")
 	case "processos":
 		return "Processos que mais gastam"
 	case "eventos":

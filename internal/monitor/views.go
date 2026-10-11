@@ -419,7 +419,8 @@ func (m *Monitor) infos(now time.Time, lim LimitsView) []Alert {
 	if st.BuildCache >= 1<<30 {
 		title := "Cache de build do Docker: " + size(st.BuildCache)
 		if m.hostNow.FSUsed > 0 { // logo depois de subir, o disco ainda não foi lido
-			title += fmt.Sprintf(" (%.0f%% do disco usado)", float64(st.BuildCache)/float64(m.hostNow.FSUsed)*100)
+			// o texto inteiro num formato só: a tradução reconhece a frase toda
+			title = fmt.Sprintf("Cache de build do Docker: %s (%.0f%% do disco usado)", size(st.BuildCache), float64(st.BuildCache)/float64(m.hostNow.FSUsed)*100)
 		}
 		out = append(out, Alert{Key: "info.buildcache", Level: "info", Area: "disco",
 			Title:  title,
