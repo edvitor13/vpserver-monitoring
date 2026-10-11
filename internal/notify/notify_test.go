@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/edvitor13/vpserver-monitoring/internal/ai"
 	"github.com/edvitor13/vpserver-monitoring/internal/docker"
+	"github.com/edvitor13/vpserver-monitoring/internal/i18n"
 	"github.com/edvitor13/vpserver-monitoring/internal/monitor"
 )
 
@@ -526,6 +528,18 @@ func TestMessagesFollowLanguage(t *testing.T) {
 	}
 	if log := s.View(ctx).Log; len(log) == 0 || strings.Contains(log[len(log)-1].Text, "Teste do VPServer") {
 		t.Fatalf("o registro guarda o que saiu (em inglês): %+v", log)
+	}
+	// o título fica no registro em português; a tela (Mensagens recentes) o traduz na saída
+	var titles []string
+	for _, e := range s.View(ctx).Log {
+		en := i18n.Tr("en", e.Title)
+		if w := ptLeft.FindString(en); w != "" {
+			t.Errorf("sobrou português (%q) no título %q", w, en)
+		}
+		titles = append(titles, en)
+	}
+	if !slices.Contains(titles, "Wrong passwords at sign-in") {
+		t.Errorf("faltou o título da segurança em inglês: %q", titles)
 	}
 }
 

@@ -20,7 +20,10 @@ import (
 
 var (
 	accent  = regexp.MustCompile(`[À-ÖØ-öø-ÿ]`)
-	ptWords = regexp.MustCompile(`(?i)\b(nao|para|com|sem|uma|dos|das|pelo|pela|ainda|agora|quando|servidor|painel|banco|disco|senha|erro|falhou|parou|caiu|rodando|ligado|desligado|nenhum|nenhuma|aqui|depois|antes|hoje|ontem|dias|horas|livre|cheio|avisos|resumo|outros|outras|todos|todas|sistema|isso|esse|essa|este|esta|deste|desta|neste|nesta|nesse|nessa|nada|menos|tempo|seu|sua|algum|alguma|mesmo|mesma|cada|vezes|dele|dela|nunca|sempre|tela|entrada|saida|limite|parado|parada|pausado|pausada|retomado|retomada|ligada|desligada|ativo|ativa|urgente|alerta|alertas|aviso|piorou|continua|mais|idioma|desconhecido|de|em|ao|aos|nos|nas|durou|resolvido|resolvidos|imagem|nova|novo|atualizada|atualizado|removida|removido|entrou|ligou|trocada|teste|enviado|enviada|falhar|falha|fora|dentro|ficou|veja|confira|tente|use|abra)\b`)
+	ptWords = regexp.MustCompile(`(?i)\b(nao|para|com|sem|uma|dos|das|pelo|pela|ainda|agora|quando|servidor|painel|banco|disco|senha|erro|falhou|parou|caiu|rodando|ligado|desligado|nenhum|nenhuma|aqui|depois|antes|hoje|ontem|dias|horas|livre|cheio|avisos|resumo|outros|outras|todos|todas|sistema|isso|esse|essa|este|esta|deste|desta|neste|nesta|nesse|nessa|nada|menos|tempo|seu|sua|algum|alguma|mesmo|mesma|cada|vezes|dele|dela|nunca|sempre|tela|entrada|saida|limite|parado|parada|pausado|pausada|retomado|retomada|ligada|desligada|ativo|ativa|urgente|alerta|alertas|aviso|piorou|continua|mais|idioma|desconhecido|de|em|ao|aos|nos|nas|durou|resolvido|resolvidos|imagem|nova|novo|atualizada|atualizado|removida|removido|entrou|ligou|trocada|teste|enviado|enviada|falhar|falha|fora|dentro|ficou|veja|confira|tente|use|abra|ou)\b`)
+	// conectivos curtos que o inglês e o shell também têm ("no", "do", "set -e"): só contam
+	// entre palavras, para achar português sem acento ("Logs do %s: %s e crescendo")
+	ptJoin  = regexp.MustCompile(`(?:^|\s)(?:e|do|da|no|na)\s+[A-Za-zÀ-ÿ]`)
 	letters = regexp.MustCompile(`[A-Za-zÀ-ÿ]{2,}`)
 )
 
@@ -33,8 +36,9 @@ var (
 	// campos que são código (a tela compara ou mapeia): nunca traduzir
 	codeFields = map[string]bool{"Area": true, "Level": true, "Key": true, "Kind": true, "Project": true, "Service": true}
 	// textos que não são de tela: rótulos do Docker, nomes técnicos, usuário de mentira do login, o
-	// arquivo de teste do bucket (nome e conteúdo) e os últimos comandos que vão para a IA do SSH
-	skipTexts = regexp.MustCompile(`^(com\.docker\.|keepalive@|painel-central:|vpmon-usuario-|teste do VPServer: pode apagar|\$ %s)|\.vpserver-teste$`)
+	// arquivo de teste do bucket (nome e conteúdo), os últimos comandos que vão para a IA do SSH e
+	// comandos do shell (o autocompletar do SSH)
+	skipTexts = regexp.MustCompile(`^(com\.docker\.|keepalive@|painel-central:|vpmon-usuario-|teste do VPServer: pode apagar|\$ %s)|\.vpserver-teste$|2>/dev/null`)
 	skipFuncs = map[string]bool{"setupScript": true, "revokeScript": true}
 	// arquivos em que só algumas declarações são tela: em monitor/ai.go, os rótulos das
 	// consultas (aiLabel e os nomes que ele usa); o resto vai para a IA. Nelas, todo texto com
@@ -66,7 +70,7 @@ func repoRoot(t *testing.T) string {
 }
 
 func isPT(s string) bool {
-	return letters.MatchString(s) && (accent.MatchString(s) || ptWords.MatchString(s))
+	return letters.MatchString(s) && (accent.MatchString(s) || ptWords.MatchString(s) || ptJoin.MatchString(s))
 }
 
 func extract(t *testing.T) keys {
