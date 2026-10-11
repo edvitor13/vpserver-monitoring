@@ -10,6 +10,9 @@
 //     valores são tirados dele, traduzidos também (ex.: "3 dias") e vão para o
 //     formato em inglês, que pode trocar a ordem com %[2]s.
 //
+// O que não bate inteiro é tentado por partes: listas com " · " ou " — " (e,
+// dentro de um valor, com ", "), e "rótulo: itens" quando o rótulo é conhecido.
+//
 // O teste do pacote lê o código Go e falha se um texto de tela em português
 // ficar sem tradução (ou se sobrar tradução de texto que não existe mais).
 package i18n
@@ -261,8 +264,13 @@ func (c *catalog) tr(s string, depth int) string {
 		}
 		return fmt.Sprintf(p.out, args...)
 	}
-	// listas montadas com " · " ou " — " (ex.: "3 dias · ligado há 2 h"): parte por parte
-	for _, sep := range []string{" · ", " — "} {
+	// listas montadas com " · " ou " — " (ex.: "3 dias · ligado há 2 h"): parte por parte;
+	// dentro de um valor, também a lista com ", " ("CPU total, memória em uso")
+	seps := []string{" · ", " — "}
+	if depth > 0 {
+		seps = append(seps, ", ")
+	}
+	for _, sep := range seps {
 		if !strings.Contains(s, sep) {
 			continue
 		}
@@ -275,6 +283,13 @@ func (c *catalog) tr(s string, depth int) string {
 		}
 		if changed {
 			return strings.Join(parts, sep)
+		}
+	}
+	// "rótulo: itens" (ex.: "Monitor (este painel): vpserver-cleaner, …"): só quando o
+	// rótulo é um texto conhecido
+	if head, rest, ok := strings.Cut(s, ": "); ok {
+		if v, ok := c.exact[head]; ok {
+			return v + ": " + c.tr(rest, depth+1)
 		}
 	}
 	return s
