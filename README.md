@@ -714,11 +714,17 @@ respostas JSON pelo catálogo `internal/i18n/en.json`: `exact` para textos fixos
 os montados com valores, do jeito que estão no código (`"Disco %.0f%% cheio"`, ou
 `nome + " está unhealthy"`, que vira `"%s está unhealthy"`). O texto pronto é reconhecido pelo
 formato, os valores são traduzidos também (ex.: `3 dias`) e o número vira o do idioma; a
-tradução pode trocar a ordem com `%[2]s`. Sem o cabeçalho (curl e outros clientes), tudo sai em
-português. O `go test ./internal/i18n/` lê o código Go e falha se um texto de tela em português
-ficar sem tradução ou se sobrar tradução; `VPMON_I18N_DUMP=faltando.json go test -run
-TestServerTextsHaveEnglish ./internal/i18n/` grava o que falta. Valores que a tela usa como
-código (área, nível, chave do alerta) ficam de fora de propósito.
+tradução pode trocar a ordem com `%[2]s`. O que não bate inteiro é tentado por partes: listas com
+` · ` ou ` — ` (e, dentro de um valor, com `, `, como `CPU total, memória em uso`) e
+`rótulo: itens` quando o rótulo é um texto do catálogo (`Monitor (este painel): …`). Mesmo assim,
+prefira `fmt.Sprintf` com a frase inteira a pedaços somados. Sem o cabeçalho (curl e outros
+clientes), tudo sai em português. O `go test ./internal/i18n/` lê o código Go e falha se um texto
+de tela em português ficar sem tradução ou se sobrar tradução; `VPMON_I18N_DUMP=faltando.json go
+test -run TestServerTextsHaveEnglish ./internal/i18n/` grava o que falta. Ele reconhece português
+por acento, por palavras de uma lista e por conectivos entre palavras (` e `, ` do `, ` no `…);
+nas declarações de `onlyDecls` (rótulos das consultas da IA, aviso da limpeza) todo texto com
+letras conta, e o teste falha se uma delas sumir. Valores que a tela usa como código (área, nível,
+chave do alerta) ficam de fora de propósito.
 
 **Mensagens do WhatsApp** também são escritas em português e traduzidas no envio, só que
 **linha por linha** (`i18n.Message`): a mensagem junta pedaços (cabeçalho, título do alerta,
@@ -727,7 +733,8 @@ enfeite da frente (emoji, `• `) e por fim sem o `*negrito*`/`_itálico_` das p
 dos textos e formatos de várias linhas do catálogo também vale sozinha (o teste reclama se a
 mesma linha tiver duas traduções). Ao escrever uma mensagem nova, monte cada linha com um
 formato que tenha texto fixo (`"*%s* _(piorou)_"`, não `"*%s*%s"` com a nota solta) e use
-`i18n.DayMonth`/`i18n.Weekday` para datas.
+`i18n.DayMonth`/`i18n.Weekday` para datas. Nome solto numa lista sem texto em volta (o top 3 de
+apps do resumo) já sai no idioma, com `i18n.Tr(lang, nome)`.
 
 Para outro idioma: um `i18n/<código>.js` (tela) e o catálogo do servidor no mesmo formato, o
 código em `LANGS` (`app.js`) e em `Langs` (`internal/web/users.go`), o `<script>` no
