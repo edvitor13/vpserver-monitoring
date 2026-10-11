@@ -112,7 +112,7 @@ func tiny(v float64) string {
 }
 
 // Summary monta o resumo de um período (daily, weekly ou monthly), com as
-// datas no formato de lang (o texto é traduzido no envio).
+// datas e os nomes das apps no idioma de lang (o resto é traduzido no envio).
 func (m *Monitor) Summary(kind string, now time.Time, lang string) string {
 	o := m.Overview() // antes de travar: o Overview trava sozinho
 	p := m.periodOf(kind, now, lang)
@@ -202,7 +202,9 @@ func (m *Monitor) Summary(kind string, now time.Time, lang string) string {
 			continue
 		}
 		q := s.Query(from, to, 2000, "cpu", "mem")
-		a := appUse{name: m.appName(key), cpu: usageOf(q.T, q.Cols["cpu"]).avg, mem: usageOf(q.T, q.Cols["mem"]).avg}
+		// o nome já sai no idioma (como as datas): na lista "Loja 642 MB · Sistema (host) 350 MB"
+		// não há texto fixo em volta para a tradução linha por linha reconhecer
+		a := appUse{name: i18n.Tr(lang, m.appName(key)), cpu: usageOf(q.T, q.Cols["cpu"]).avg, mem: usageOf(q.T, q.Cols["mem"]).avg}
 		for _, d := range p.days() {
 			a.tx += float64(m.st.Traffic.Day(k, d).Tx)
 		}

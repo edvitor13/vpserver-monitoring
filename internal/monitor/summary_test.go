@@ -32,10 +32,31 @@ func TestDailySummary(t *testing.T) {
 // no envio (i18n.Message), não deixa nada em português.
 func TestSummaryInEnglish(t *testing.T) {
 	m, now := summaryMonitor()
-	pt := regexp.MustCompile(`(?i)[à-ÿ]|\b(de|do|da|dos|em|às|média|pico|saída|entrada|grátis|caiu|agora|tudo|certo|servidor|aplicações|ocorrências|resumo|mais)\b`)
+	// apps no top 3, inclusive as de mentira: o servidor e o próprio painel
+	m.cfg.SelfProject = "vpserver-monitoring"
+	day := time.Date(2026, 10, 5, 0, 0, 0, 0, m.cfg.Loc)
+	for key, use := range map[string][2]float64{"loja": {40, 642 << 20}, "vpserver-monitoring": {30, 100 << 20},
+		AppSystem: {20, 350 << 20}, "portal": {10, 378 << 20}} {
+		s := store.NewSeries(unitFields, unitTiers)
+		for ts := day; ts.Before(day.Add(24 * time.Hour)); ts = ts.Add(5 * time.Minute) {
+			s.Add(ts.Unix(), []float64{use[0], use[1], 0, 0, 0, 0}) // cpu, mem, rx, tx, rd, wr
+		}
+		m.st.Units["app:"+key] = s
+	}
+	got := m.Summary("daily", now, "pt-BR")
+	for _, want := range []string{"• Mais CPU: Loja 40% · Monitor (este painel) 30% · Sistema (host) 20%",
+		"• Mais memória: Loja 642 MB · Portal 378 MB · Sistema (host) 350 MB"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("português: faltou %q em:\n%s", want, got)
+		}
+	}
+
+	pt := regexp.MustCompile(`(?i)[à-ÿ]|\b(de|do|da|dos|em|às|média|pico|saída|entrada|grátis|caiu|agora|tudo|certo|servidor|aplicações|ocorrências|resumo|mais|sistema|este|painel)\b`)
 	for kind, wants := range map[string][]string{
 		"daily": {"📊 *Yesterday's summary · srv*", "_Monday, 10/05_", "• CPU: average 10", "peak 80% at 14:30", "• Outbound data: 2.0 GB",
-			"(<0.1% of the free 10 TB)", "*Server*", "• loja-api went down 1×", "*Now:* ✅ all good"},
+			"(<0.1% of the free 10 TB)", "*Server*", "• loja-api went down 1×", "*Now:* ✅ all good",
+			"• Most CPU: Loja 40% · Monitor (this panel) 30% · System (host) 20%",
+			"• Most memory: Loja 642 MB · Portal 378 MB · System (host) 350 MB"},
 		"monthly": {"📊 *Month-end summary · srv*", "_October 2026_", "• Outbound data: 2.0 GB (<0.1% of the free 10 TB) · inbound 1.0 GB"},
 		"weekly":  {"📊 *Weekly summary · srv*", "_09/29 – 10/05_", "peak 80% on 10/05 14:30"},
 	} {
