@@ -53,6 +53,76 @@ func TestSummaryInEnglish(t *testing.T) {
 	}
 }
 
+// Infos em inglês (a tela traduz na saída, como i18n.Tr): títulos, ações e
+// itens montados no servidor saem inteiros, e o português sai como antes.
+func TestInfosInEnglish(t *testing.T) {
+	m, now := summaryMonitor()
+	m.cfg.SelfProject = "vpserver-monitoring"
+	gb := float64(1 << 30)
+	m.stor.view.BuildCache = uint64(17.6 * gb)
+	m.hostNow.FSUsed = m.stor.view.BuildCache * 100 / 21
+	unit := func(name string, logs uint64) UnitView {
+		return UnitView{Name: name, Container: &docker.Container{Name: name, State: "running"}, Disk: &Disk{Logs: logs}}
+	}
+	m.apps = []AppView{
+		{Key: "loja", Name: "Loja", Kind: "compose", Units: []UnitView{unit("loja-api-1", uint64(1.4*gb))}},
+		{Key: "portal", Name: "Portal", Kind: "compose", Units: []UnitView{unit("portal-app-1", 563<<20)}},
+		{Key: "vpserver-monitoring", Name: m.appName("vpserver-monitoring"), Kind: "compose", Self: true,
+			Units: []UnitView{unit("vpserver-cleaner", 0), unit("vpserver-dockerproxy", 0)}},
+	}
+	infos := map[string]Alert{}
+	for _, a := range m.infos(now, LimitsView{}) {
+		infos[a.Key] = a
+	}
+	monitorItem := "Monitor (this panel): vpserver-cleaner, vpserver-dockerproxy"
+	for _, c := range []struct{ key, field, pt, en string }{
+		{"info.buildcache", "Title", "Cache de build do Docker: 17,6 GB (21% do disco usado)", "Docker build cache: 17.6 GB (21% of the disk used)"},
+		{"info.logs:Loja", "Title", "Logs do Loja: 1,4 GB e crescendo", "Loja logs: 1.4 GB and growing"},
+		{"info.logs:Portal", "Title", "Logs do Portal: 563 MB e crescendo", "Portal logs: 563 MB and growing"},
+		{"info.logs:Loja", "Action", `no compose da app: logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}`,
+			`in the app's compose file: logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}`},
+		{"info.nolimit", "Action", "no compose: mem_limit (ex.: mem_limit: 512m)", "in the compose file: mem_limit (e.g. mem_limit: 512m)"},
+		{"info.nohealth", "Action", "no compose: healthcheck: {test: [...], interval: 30s}", "in the compose file: healthcheck: {test: [...], interval: 30s}"},
+		{"info.nolimit", "Items", "Monitor (este painel): vpserver-cleaner, vpserver-dockerproxy", monitorItem},
+		{"info.nohealth", "Items", "Monitor (este painel): vpserver-cleaner, vpserver-dockerproxy", monitorItem},
+	} {
+		a, ok := infos[c.key]
+		if !ok {
+			t.Fatalf("faltou a Info %s em %+v", c.key, infos)
+		}
+		got := map[string]string{"Title": a.Title, "Action": a.Action}[c.field]
+		if c.field == "Items" {
+			for _, it := range a.Items {
+				if strings.HasPrefix(it, "Monitor (") {
+					got = it
+				}
+			}
+		}
+		if got != c.pt {
+			t.Errorf("%s %s: %q, esperava %q", c.key, c.field, got, c.pt)
+		}
+		if en := i18n.Tr("en", got); en != c.en {
+			t.Errorf("%s %s em inglês: %q, esperava %q", c.key, c.field, en, c.en)
+		}
+	}
+	// nada de português em nenhuma Info montada aqui
+	pt := regexp.MustCompile(`(?i)[à-ÿ]|\b(de|do|da|dos|das|em|na|ex|crescendo|usado|disco|servidor|painel|este|sem|limite)\b`)
+	for _, a := range infos {
+		for _, s := range append([]string{a.Title, a.Detail, a.Action}, a.Items...) {
+			if en := i18n.Tr("en", s); pt.MatchString(en) {
+				t.Errorf("%s: sobrou português (%q) em %q", a.Key, pt.FindString(en), en)
+			}
+		}
+	}
+	// sem o disco lido (logo depois de subir), só o tamanho
+	m.hostNow.FSUsed = 0
+	for _, a := range m.infos(now, LimitsView{}) {
+		if a.Key == "info.buildcache" && (a.Title != "Cache de build do Docker: 17,6 GB" || i18n.Tr("en", a.Title) != "Docker build cache: 17.6 GB") {
+			t.Errorf("cache de build sem o disco: %q / %q", a.Title, i18n.Tr("en", a.Title))
+		}
+	}
+}
+
 func summaryMonitor() (*Monitor, time.Time) {
 	loc := time.FixedZone("BRT", -3*3600)
 	now := time.Date(2026, 10, 6, 8, 0, 0, 0, loc)
