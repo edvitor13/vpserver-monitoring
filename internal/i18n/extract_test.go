@@ -36,8 +36,11 @@ var (
 	// arquivo de teste do bucket (nome e conteúdo) e os últimos comandos que vão para a IA do SSH
 	skipTexts = regexp.MustCompile(`^(com\.docker\.|keepalive@|painel-central:|vpmon-usuario-|teste do VPServer: pode apagar|\$ %s)|\.vpserver-teste$`)
 	skipFuncs = map[string]bool{"setupScript": true, "revokeScript": true}
-	// em monitor/ai.go, só os rótulos das ferramentas aparecem na tela (o resto é para a IA)
-	onlyFuncs = map[string]map[string]bool{"internal/monitor/ai.go": {"Label": true}}
+	// arquivos em que só algumas declarações são tela: em monitor/ai.go, os rótulos das
+	// consultas (aiLabel e os nomes que ele usa); o resto vai para a IA. Nelas, todo texto com
+	// letras é de tela, mesmo sem acento ("CPU total", "swap"), menos as chaves dos mapas. O teste
+	// falha se uma delas sumir ou ficar sem texto (a lista apontava para Label, que só chama aiLabel)
+	onlyDecls = map[string]map[string]bool{"internal/monitor/ai.go": {"aiLabel": true, "fieldNames": true, "rangeLabel": true}}
 	skipCalls = regexp.MustCompile(`^(slog\.|regexp\.|strings\.(Has|Contains|Trim|Index|Cut|Split|Replace|Count|EqualFold|Fields)|errors\.Is|filepath\.|os\.|http\.)`)
 	// argumentos que são código (chave, nível e área do alerta em add(chave, nível, área, título, detalhe, alvo))
 	codeArgs = map[string]int{"add": 3}
@@ -50,6 +53,7 @@ var (
 type keys struct {
 	exact   map[string]string // texto -> onde
 	formats map[string]string
+	used    map[string]bool // "arquivo:nome" das declarações de onlyDecls que deram texto
 }
 
 func repoRoot(t *testing.T) string {
@@ -68,7 +72,7 @@ func isPT(s string) bool {
 func extract(t *testing.T) keys {
 	t.Helper()
 	root := repoRoot(t)
-	k := keys{exact: map[string]string{}, formats: map[string]string{}}
+	k := keys{exact: map[string]string{}, formats: map[string]string{}, used: map[string]bool{}}
 	filepath.Walk(filepath.Join(root, "internal"), func(p string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -139,15 +143,44 @@ func concatFormat(e ast.Expr) (string, bool) {
 	return strings.Join(parts, ""), hasLit
 }
 
+// listed diz se algum dos nomes está na lista.
+func listed(names []*ast.Ident, set map[string]bool) bool {
+	for _, nm := range names {
+		if set[nm.Name] {
+			return true
+		}
+	}
+	return false
+}
+
 func collect(f *ast.File, fs *token.FileSet, rel string, k *keys) {
 	var stack []ast.Node
-	caseExprs := map[ast.Node]bool{}
-	only := onlyFuncs[rel]
+	skip := map[ast.Node]bool{} // os "texto" de case "texto": e as chaves dos mapas de onlyDecls
+	only := onlyDecls[rel]
+	// marca a declaração de onlyDecls em que está o texto achado
+	mark := func() {
+		if only == nil {
+			return
+		}
+		for i := len(stack) - 1; i >= 0; i-- {
+			switch d := stack[i].(type) {
+			case *ast.FuncDecl:
+				k.used[rel+":"+d.Name.Name] = true
+				return
+			case *ast.ValueSpec:
+				for _, nm := range d.Names {
+					k.used[rel+":"+nm.Name] = true
+				}
+				return
+			}
+		}
+	}
 	ast.Inspect(f, func(n ast.Node) bool {
 		if n == nil {
 			stack = stack[:len(stack)-1]
 			return true
 		}
+		atTop := len(stack) <= 2 // o arquivo e, no máximo, um var/const do topo por cima
 		switch x := n.(type) {
 		case *ast.ImportSpec, *ast.Field:
 			return false
@@ -156,18 +189,32 @@ func collect(f *ast.File, fs *token.FileSet, rel string, k *keys) {
 				return false
 			}
 		case *ast.GenDecl:
-			if only != nil && x.Tok != token.IMPORT { // nesses arquivos, só as funções escolhidas
-				return false
+			if only != nil && atTop { // nesses arquivos, só as variáveis escolhidas
+				keep := false
+				for _, sp := range x.Specs {
+					if v, ok := sp.(*ast.ValueSpec); ok && listed(v.Names, only) {
+						keep = true
+					}
+				}
+				if !keep {
+					return false
+				}
 			}
 		case *ast.KeyValueExpr:
 			if id, ok := x.Key.(*ast.Ident); ok && codeFields[id.Name] {
 				return false
+			}
+			if _, ok := x.Key.(*ast.BasicLit); ok && only != nil {
+				skip[x.Key] = true // chave de mapa: código
 			}
 		case *ast.ValueSpec:
 			for _, nm := range x.Names {
 				if skipDecls.MatchString(nm.Name) {
 					return false
 				}
+			}
+			if only != nil && atTop && !listed(x.Names, only) {
+				return false
 			}
 		case *ast.CallExpr:
 			if skipCalls.MatchString(callName(x)) {
@@ -180,10 +227,10 @@ func collect(f *ast.File, fs *token.FileSet, rel string, k *keys) {
 		case *ast.CaseClause:
 			// case "texto": é comparação, não tela (o corpo do case é tela, como qualquer outro)
 			for _, e := range x.List {
-				caseExprs[e] = true
+				skip[e] = true
 			}
 		}
-		if caseExprs[n] {
+		if skip[n] {
 			return false
 		}
 		stack = append(stack, n)
@@ -192,7 +239,7 @@ func collect(f *ast.File, fs *token.FileSet, rel string, k *keys) {
 			return true
 		}
 		s, err := strconv.Unquote(lit.Value)
-		if err != nil || !isPT(s) || skipTexts.MatchString(s) {
+		if err != nil || skipTexts.MatchString(s) || !(isPT(s) || only != nil && letters.MatchString(s)) {
 			return true
 		}
 		where := rel + ":" + strconv.Itoa(fs.Position(lit.Pos()).Line)
@@ -235,16 +282,19 @@ func collect(f *ast.File, fs *token.FileSet, rel string, k *keys) {
 			}
 			if fm, ok := concatFormat(stack[top].(ast.Expr)); ok && strings.Contains(fm, "%s") {
 				k.formats[fm] = where
+				mark()
 			}
 			return true
 		}
 		if c, ok := parent.(*ast.CallExpr); ok {
 			if i, ok := fmtCalls[callName(c)]; ok && i < len(c.Args) && c.Args[i] == lit && verb.MatchString(strings.ReplaceAll(s, "%%", "")) {
 				k.formats[s] = where
+				mark()
 				return true
 			}
 		}
 		k.exact[s] = where
+		mark()
 		return true
 	})
 }
@@ -268,6 +318,13 @@ func TestServerTextsHaveEnglish(t *testing.T) {
 	k := extract(t)
 	if len(k.exact)+len(k.formats) < 200 {
 		t.Fatalf("poucos textos achados (%d): a leitura do código quebrou?", len(k.exact)+len(k.formats))
+	}
+	for file, names := range onlyDecls {
+		for name := range names {
+			if !k.used[file+":"+name] {
+				t.Errorf("%s: %s sumiu ou não tem mais texto de tela (ajuste onlyDecls)", file, name)
+			}
+		}
 	}
 	f := readCatalog(t)
 	type miss struct {
